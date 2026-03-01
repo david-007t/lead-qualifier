@@ -551,7 +551,7 @@ Return ${prospectCount} businesses. Use real data from your search. If you can't
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 8000,
           system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Respond with ONLY a raw JSON array. No markdown, no explanation — just [ ... ]. This is critical.",
           messages: [{ role: "user", content: prompt }],
@@ -661,7 +661,7 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 500,
           messages: [{ role: "user", content: prompt }],
         }),
