@@ -295,7 +295,7 @@ const themes = {
 };
 
 // ─── STORAGE HELPERS ──────────────────────────────────────────
-const SK = { leads: "lq-leads-v2", criteria: "lq-criteria-v2", settings: "lq-settings-v2" };
+const SK = { leads: "lq-leads-v2", criteria: "lq-criteria-v2", settings: "lq-settings-v2", outreachProspects: "lq-outreach-prospects-v1", outreachDrafts: "lq-outreach-drafts-v1", emailConfig: "lq-email-config-v1" };
 
 async function loadData(key) {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; }
@@ -361,6 +361,13 @@ export default function LeadQualifier() {
   // Joe's Queue state
   const [queueActions, setQueueActions] = useState({});
 
+  // Outreach state
+  const [outreachProspects, setOutreachProspects] = useState([]);
+  const [outreachDrafts, setOutreachDrafts] = useState({});   // { id: { to, subject, body } }
+  const [outreachStatuses, setOutreachStatuses] = useState({}); // { id: 'draft'|'sending'|'sent'|'replied' }
+  const [sendingEmail, setSendingEmail] = useState(null);
+  const [emailConfig, setEmailConfig] = useState({ host: "", port: 587, user: "", pass: "", fromName: "" });
+
   const fileRef = useRef();
   const t = themes[theme];
   const ind = INDUSTRIES[industry] || INDUSTRIES.construction;
@@ -369,8 +376,9 @@ export default function LeadQualifier() {
   // ─── LOAD PERSISTED DATA ──────────────────────────────────
   useEffect(() => {
     (async () => {
-      const [savedLeads, savedCriteria, savedSettings] = await Promise.all([
+      const [savedLeads, savedCriteria, savedSettings, savedOutreachProspects, savedOutreachDrafts, savedEmailConfig] = await Promise.all([
         loadData(SK.leads), loadData(SK.criteria), loadData(SK.settings),
+        loadData(SK.outreachProspects), loadData(SK.outreachDrafts), loadData(SK.emailConfig),
       ]);
       if (savedLeads) setLeads(savedLeads);
       if (savedCriteria) setCriteria(savedCriteria);
@@ -382,6 +390,9 @@ export default function LeadQualifier() {
         }
         if (savedSettings.setupComplete) { setSetupComplete(true); setTab("dashboard"); }
       }
+      if (savedOutreachProspects) setOutreachProspects(savedOutreachProspects);
+      if (savedOutreachDrafts) setOutreachDrafts(savedOutreachDrafts);
+      if (savedEmailConfig) setEmailConfig(savedEmailConfig);
       setLoading(false);
     })();
   }, []);
@@ -390,6 +401,9 @@ export default function LeadQualifier() {
   useEffect(() => { if (!loading) saveData(SK.leads, leads); }, [leads, loading]);
   useEffect(() => { if (!loading) saveData(SK.criteria, criteria); }, [criteria, loading]);
   useEffect(() => { if (!loading) saveData(SK.settings, { companyName, theme, industry, setupComplete }); }, [companyName, theme, industry, setupComplete, loading]);
+  useEffect(() => { if (!loading) saveData(SK.outreachProspects, outreachProspects); }, [outreachProspects, loading]);
+  useEffect(() => { if (!loading) saveData(SK.outreachDrafts, outreachDrafts); }, [outreachDrafts, loading]);
+  useEffect(() => { if (!loading) saveData(SK.emailConfig, emailConfig); }, [emailConfig, loading]);
 
   // ─── KEYBOARD SHORTCUTS ───────────────────────────────────
   useEffect(() => {
@@ -791,11 +805,76 @@ Respond with ONLY this JSON structure, no markdown:
       title: "Reset Everything",
       message: "This will delete all leads, criteria, and settings. Start fresh?",
       onConfirm: async () => {
-        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setProspects([]); setEmailDrafts({}); setQueueActions({}); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
-        try { localStorage.removeItem(SK.leads); localStorage.removeItem(SK.criteria); localStorage.removeItem(SK.settings); } catch {}
+        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setProspects([]); setEmailDrafts({}); setQueueActions({}); setOutreachProspects([]); setOutreachDrafts({}); setOutreachStatuses({}); setEmailConfig({ host: "", port: 587, user: "", pass: "", fromName: "" }); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
+        try { localStorage.removeItem(SK.leads); localStorage.removeItem(SK.criteria); localStorage.removeItem(SK.settings); localStorage.removeItem(SK.outreachProspects); localStorage.removeItem(SK.outreachDrafts); localStorage.removeItem(SK.emailConfig); } catch {}
         setConfirmAction(null); showToast("App reset complete");
       },
     });
+  };
+
+  // ─── SMTP AUTO-DETECT ─────────────────────────────────────
+  const detectSmtpHost = (email) => {
+    const domain = (email || "").split("@")[1]?.toLowerCase() || "";
+    if (domain === "gmail.com") return { host: "smtp.gmail.com", port: 587 };
+    if (["outlook.com", "hotmail.com", "live.com"].includes(domain)) return { host: "smtp-mail.outlook.com", port: 587 };
+    if (domain === "yahoo.com") return { host: "smtp.mail.yahoo.com", port: 465 };
+    if (domain === "icloud.com") return { host: "smtp.mail.me.com", port: 587 };
+    return { host: "", port: 587 };
+  };
+
+  // ─── OUTREACH OPERATIONS ──────────────────────────────────
+  const handleAddToOutreach = (prospect) => {
+    if (outreachProspects.find(p => p.id === prospect.id)) {
+      showToast(`${prospect.businessName} already in Outreach`, "error"); return;
+    }
+    setOutreachProspects(prev => [prospect, ...prev]);
+    // Pre-fill draft: use existing email draft if available, else playbook step1 body, else blank
+    const existingDraft = emailDrafts[prospect.id];
+    const playbook = playbookData[prospect.id];
+    let body = existingDraft || "";
+    let subject = `Quick question for ${prospect.businessName}`;
+    if (!body && playbook?.play?.step1) {
+      const s = playbook.play.step1;
+      body = `Hi${prospect.ownerName ? " " + prospect.ownerName.split(" ")[0] : ""},\n\nI noticed ${prospect.businessName} ${playbook.diagnosis?.[0]?.signal || "and wanted to reach out"}.\n\nWe help ${prospect.niche} businesses like yours with ${s.offer}. ${s.whySolvesIt}\n\nWould a quick 15-minute call this week make sense?\n\nBest,\n${companyName || "Ascend Solutions"}`;
+      subject = `${s.offer?.split(" ").slice(0, 5).join(" ")} for ${prospect.businessName}`;
+    }
+    setOutreachDrafts(prev => ({
+      ...prev,
+      [prospect.id]: { to: prospect.email || "", subject, body },
+    }));
+    setOutreachStatuses(prev => ({ ...prev, [prospect.id]: "draft" }));
+    showToast(`${prospect.businessName} added to Outreach`);
+  };
+
+  const handleSendEmail = async (prospect) => {
+    if (!emailConfig.user || !emailConfig.pass) {
+      showToast("Configure your email in Settings → Email first", "error"); return;
+    }
+    const draft = outreachDrafts[prospect.id];
+    if (!draft?.to) { showToast("Add a recipient email address", "error"); return; }
+    if (!draft?.subject) { showToast("Add a subject line", "error"); return; }
+    if (!draft?.body) { showToast("Email body is empty", "error"); return; }
+    setSendingEmail(prospect.id);
+    try {
+      const response = await fetchWithRetry("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smtpConfig: { host: emailConfig.host, port: emailConfig.port, user: emailConfig.user, pass: emailConfig.pass, fromName: emailConfig.fromName || companyName },
+          to: draft.to,
+          subject: draft.subject,
+          body: draft.body,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) { showToast(data.error || "Send failed", "error"); setSendingEmail(null); return; }
+      setOutreachStatuses(prev => ({ ...prev, [prospect.id]: "sent" }));
+      showToast(`Email sent to ${prospect.businessName} ✓`);
+    } catch (err) {
+      console.error("Send email error:", err);
+      showToast("Failed to send — check your email settings", "error");
+    }
+    setSendingEmail(null);
   };
 
   // ─── FILTERED & SORTED LEADS ─────────────────────────────
@@ -1121,7 +1200,7 @@ Respond with ONLY this JSON structure, no markdown:
         {/* Tabs */}
         <div style={{ borderBottom: `1px solid ${t.border}` }}>
           <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 32px", display: "flex", gap: 2, overflowX: "auto" }} className="tab-bar">
-            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "Joe's Queue" }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
+            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "Joe's Queue" }, { id: "outreach", label: "Outreach", count: outreachProspects.length || undefined }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)} style={{ padding: "12px 20px", background: tab === tb.id ? t.accent : "transparent", color: tab === tb.id ? "#0c0a09" : t.textMuted, border: "none", borderBottom: tab === tb.id ? `3px solid ${t.accent}` : "3px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: tab === tb.id ? 700 : 500, letterSpacing: "0.02em", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
                 {tb.label}
                 {tb.count !== undefined && <span style={{ background: tab === tb.id ? "#00000033" : t.bgHover, color: tab === tb.id ? "#0c0a09" : t.textDim, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{tb.count}</span>}
@@ -1631,6 +1710,11 @@ Respond with ONLY this JSON structure, no markdown:
                             style={{ ...btnSecondary, fontSize: 12, borderColor: openPlaybook === p.id ? t.accent : t.borderLight, color: openPlaybook === p.id ? t.accent : t.textMuted, background: openPlaybook === p.id ? t.accent + "11" : t.bgHover, opacity: generatingPlaybook === p.id ? 0.6 : 1 }}>
                             {generatingPlaybook === p.id ? "⏳ Building Playbook..." : openPlaybook === p.id && playbookData[p.id] ? "📋 Hide Playbook" : "📋 Sales Playbook"}
                           </button>
+                          <button
+                            onClick={() => handleAddToOutreach(p)}
+                            style={{ ...btnSecondary, fontSize: 12, borderColor: outreachProspects.find(op => op.id === p.id) ? t.green : t.borderLight, color: outreachProspects.find(op => op.id === p.id) ? t.green : t.textMuted, background: outreachProspects.find(op => op.id === p.id) ? t.green + "11" : t.bgHover }}>
+                            {outreachProspects.find(op => op.id === p.id) ? "✓ In Outreach" : "📤 Add to Outreach"}
+                          </button>
                         </div>
 
                         {emailDrafts[p.id] && (
@@ -1930,6 +2014,177 @@ Respond with ONLY this JSON structure, no markdown:
                 </div>
                 <button onClick={handleResetApp} style={{ ...btnSecondary, color: t.red, borderColor: t.redBorder, background: "transparent", fontSize: 12 }}>↺ Reset Everything</button>
               </div>
+
+              {/* Email Config */}
+              <div style={{ ...cardStyle, marginTop: 8 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: t.text }}>📧 Email (for Outreach)</h3>
+                <p style={{ fontSize: 12, color: t.textDim, marginBottom: 16, lineHeight: 1.5 }}>
+                  For Gmail, use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: t.accent }}>App Password</a> (not your real password). SMTP host is auto-detected from your email address.
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={labelStyle}>Your Name (shown in From field)</label>
+                    <input style={inputStyle} value={emailConfig.fromName} onChange={e => setEmailConfig(p => ({ ...p, fromName: e.target.value }))} placeholder="Joe Smith" />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={labelStyle}>Email Address</label>
+                    <input style={inputStyle} type="email" value={emailConfig.user} onChange={e => {
+                      const detected = detectSmtpHost(e.target.value);
+                      setEmailConfig(p => ({ ...p, user: e.target.value, host: detected.host || p.host, port: detected.port }));
+                    }} placeholder="you@gmail.com" />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={labelStyle}>Password / App Password</label>
+                    <input style={inputStyle} type="password" value={emailConfig.pass} onChange={e => setEmailConfig(p => ({ ...p, pass: e.target.value }))} placeholder="App password (Gmail) or email password" />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>SMTP Host (auto-detected)</label>
+                    <input style={inputStyle} value={emailConfig.host} onChange={e => setEmailConfig(p => ({ ...p, host: e.target.value }))} placeholder="smtp.gmail.com" />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Port</label>
+                    <input style={inputStyle} type="number" value={emailConfig.port} onChange={e => setEmailConfig(p => ({ ...p, port: parseInt(e.target.value) || 587 }))} />
+                  </div>
+                </div>
+                {emailConfig.user && emailConfig.pass && emailConfig.host && (
+                  <div style={{ marginTop: 12, padding: "8px 12px", background: t.greenBg, border: `1px solid ${t.greenBorder}`, borderRadius: 6, fontSize: 12, color: t.green }}>
+                    ✓ Email configured — ready to send from {emailConfig.user}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ════════════ OUTREACH ════════════ */}
+          {tab === "outreach" && (
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
+              <div style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>📤 Outreach</h2>
+                <p style={{ color: t.textDim, fontSize: 14 }}>Draft and send personalized emails to your prospects. Add prospects from the Prospects tab.</p>
+              </div>
+
+              {/* Email not configured banner */}
+              {(!emailConfig.user || !emailConfig.pass || !emailConfig.host) && (
+                <div style={{ ...cardStyle, background: t.accent + "12", border: `1px solid ${t.accent}44`, marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>⚠ Email not configured</div>
+                    <div style={{ fontSize: 12, color: t.textMuted }}>Add your email credentials in Settings → Email to enable sending.</div>
+                  </div>
+                  <button onClick={() => setTab("settings")} style={{ ...btnPrimary, fontSize: 12, padding: "8px 20px" }}>Go to Settings →</button>
+                </div>
+              )}
+
+              {outreachProspects.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "80px 20px" }}>
+                  <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📤</div>
+                  <h3 style={{ fontSize: 18, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No prospects in outreach yet</h3>
+                  <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 24 }}>Find prospects and click "Add to Outreach" on any card</p>
+                  <button onClick={() => setTab("prospects")} style={btnPrimary}>🎯 Find Prospects</button>
+                </div>
+              ) : (
+                <div>
+                  {/* Summary bar */}
+                  <div style={{ ...cardStyle, display: "flex", gap: 32, marginBottom: 20, flexWrap: "wrap" }}>
+                    {[
+                      { label: "Total", val: outreachProspects.length, color: t.text },
+                      { label: "Draft", val: Object.values(outreachStatuses).filter(s => s === "draft").length, color: t.textMuted },
+                      { label: "Sent", val: Object.values(outreachStatuses).filter(s => s === "sent").length, color: t.accent },
+                      { label: "Replied", val: Object.values(outreachStatuses).filter(s => s === "replied").length, color: t.green },
+                    ].map(s => (
+                      <div key={s.label} style={{ textAlign: "center" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 28, fontWeight: 700, color: s.color }}>{s.val}</div>
+                        <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em" }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 20 }}>
+                    {outreachProspects.map(p => {
+                      const status = outreachStatuses[p.id] || "draft";
+                      const draft = outreachDrafts[p.id] || { to: "", subject: "", body: "" };
+                      const statusColors = { draft: t.textDim, sending: t.accent, sent: t.accent, replied: t.green };
+                      const statusLabels = { draft: "Draft", sending: "Sending…", sent: "Sent ✓", replied: "Replied ✓" };
+                      return (
+                        <div key={p.id} style={{ ...cardStyle, borderLeft: `4px solid ${statusColors[status]}` }}>
+                          {/* Prospect header */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 16 }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                                <h3 style={{ fontSize: 16, fontWeight: 700 }}>{p.businessName}</h3>
+                                <span style={{ padding: "3px 10px", background: statusColors[status] + "22", color: statusColors[status], borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{statusLabels[status]}</span>
+                                <span style={{ padding: "3px 10px", background: t.bgHover, borderRadius: 20, fontSize: 11, color: t.textDim }}>{p.niche}</span>
+                              </div>
+                              {p.ownerName && <div style={{ fontSize: 13, color: t.textMuted }}>Owner: {p.ownerName}</div>}
+                              {p.address && <div style={{ fontSize: 12, color: t.textDim }}>📍 {p.address}</div>}
+                            </div>
+                            <button onClick={() => setOutreachProspects(prev => prev.filter(op => op.id !== p.id))}
+                              style={{ background: "transparent", border: "none", color: t.textFaint, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "2px 6px" }} title="Remove from outreach">×</button>
+                          </div>
+
+                          {/* Playbook reference (collapsed summary) */}
+                          {playbookData[p.id]?.play?.step1 && (
+                            <div style={{ marginBottom: 14, padding: "10px 14px", background: t.accent + "0e", border: `1px solid ${t.accent}33`, borderRadius: 6, fontSize: 12 }}>
+                              <span style={{ color: t.accent, fontWeight: 700 }}>📋 Playbook: </span>
+                              <span style={{ color: t.textMuted }}>{playbookData[p.id].play.step1.offer} — {playbookData[p.id].play.step1.price}</span>
+                            </div>
+                          )}
+
+                          {/* Email form */}
+                          <div style={{ display: "grid", gap: 12 }}>
+                            <div>
+                              <label style={labelStyle}>To</label>
+                              <input style={{ ...inputStyle, fontSize: 13 }} type="email" value={draft.to}
+                                onChange={e => setOutreachDrafts(prev => ({ ...prev, [p.id]: { ...prev[p.id], to: e.target.value } }))}
+                                placeholder="owner@business.com" />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Subject</label>
+                              <input style={{ ...inputStyle, fontSize: 13 }} value={draft.subject}
+                                onChange={e => setOutreachDrafts(prev => ({ ...prev, [p.id]: { ...prev[p.id], subject: e.target.value } }))}
+                                placeholder="Subject line…" />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Email Body</label>
+                              <textarea style={{ ...inputStyle, minHeight: 160, resize: "vertical", fontSize: 13, lineHeight: 1.6 }}
+                                value={draft.body}
+                                onChange={e => setOutreachDrafts(prev => ({ ...prev, [p.id]: { ...prev[p.id], body: e.target.value } }))}
+                                placeholder="Write your email here…" />
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+                            <button
+                              onClick={() => handleSendEmail(p)}
+                              disabled={sendingEmail === p.id || status === "sent"}
+                              style={{ ...btnPrimary, padding: "10px 24px", fontSize: 13, opacity: (sendingEmail === p.id || status === "sent") ? 0.6 : 1, cursor: sendingEmail === p.id ? "wait" : "pointer" }}>
+                              {sendingEmail === p.id ? "Sending…" : status === "sent" ? "✓ Sent" : "Send Email"}
+                            </button>
+                            <button onClick={() => { navigator.clipboard.writeText(draft.body || ""); showToast("Email body copied"); }} style={{ ...btnSecondary, fontSize: 12 }}>
+                              Copy Body
+                            </button>
+                            {status === "sent" && (
+                              <button onClick={() => setOutreachStatuses(prev => ({ ...prev, [p.id]: "replied" }))}
+                                style={{ ...btnSecondary, fontSize: 12, color: t.green, borderColor: t.greenBorder }}>
+                                Mark Replied
+                              </button>
+                            )}
+                            {status === "replied" && (
+                              <span style={{ fontSize: 12, color: t.green, fontWeight: 600 }}>🎉 They replied!</span>
+                            )}
+                            {!playbookData[p.id] && (
+                              <button onClick={() => { handleGeneratePlaybook(p); }}
+                                style={{ ...btnSecondary, fontSize: 12, marginLeft: "auto" }}>
+                                📋 Generate Playbook
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
