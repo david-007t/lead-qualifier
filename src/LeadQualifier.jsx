@@ -476,51 +476,46 @@ export default function LeadQualifier() {
       ? `\n\nIMPORTANT — Do NOT include any of these businesses, they are already in our pipeline:\n${excludedNames.map(n => `- ${n}`).join("\n")}\n`
       : "";
 
-    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${nicheLabel} businesses in ${prospectCity.trim()} that need their services.${exclusionClause}
+    const nicheInstruction = prospectNiche.trim()
+      ? `Focus specifically on ${prospectNiche} businesses.`
+      : `Find a variety of local service businesses (e.g. HVAC, plumbing, roofing, cleaning, landscaping, auto repair, dental, gyms, restaurants — any small business that could benefit from better marketing, web presence, or automation).`;
 
-MULTI-STEP SEARCH PROCESS:
+    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find businesses in ${prospectCity.trim()} that need their services.${exclusionClause}
 
-Step 1: Search for "${searchQuery}" — find ${prospectCount} real businesses with names, addresses, phone numbers, websites.
+${nicheInstruction}
 
-Step 2: For each business found, search for:
-- Their Indeed job postings (hiring = growth signal)
-- Google reviews (rating and count)
-- Facebook/Instagram presence
-- Website quality (modern vs outdated, has online booking/lead capture?)
-- Any signs they're running ads
+TASK: Search for "${searchQuery}" and find ${prospectCount} real local businesses. Then for each, gather additional info.
 
-Step 3: Identify buying signals based on these filters: ${filterList.join(", ")}
+Search steps:
+1. Find ${prospectCount} real businesses with names, addresses, phone numbers, websites
+2. For each business check: Indeed job postings, Google reviews, Facebook/Instagram presence, website quality, any ad activity
+3. Identify buying signals${filterList.length > 0 ? `: ${filterList.join(", ")}` : ""}
 
-RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation. Each object must have:
+CRITICAL: Your entire response must be ONLY a valid JSON array starting with [ and ending with ]. No text before or after. No markdown. No explanation. Just the raw JSON array.
 
-{
-  "businessName": "Summit HVAC Services",
-  "ownerName": "Mike Rivera",
-  "phone": "(512) 555-0188",
-  "email": "mike@summithvac.com",
-  "website": "summithvac.com",
-  "websiteQuality": "outdated, no online booking",
-  "address": "1234 Main St, Austin TX 78701",
-  "googleReviews": { "rating": 4.2, "count": 47 },
-  "socialMedia": { "facebook": "active", "instagram": "none", "linkedin": "none" },
-  "indeedHiring": ["HVAC Technician", "Office Manager"],
-  "estimatedRevenue": "$500K-1M",
-  "yearEstablished": "2019",
-  "niche": "${prospectNiche}",
-  "buyingSignals": [
-    "Hiring 2 positions on Indeed — scaling fast",
-    "Website has no online booking or lead capture",
-    "No Instagram presence"
-  ],
-  "opportunities": [
-    "Needs lead capture automation",
-    "Website rebuild opportunity",
-    "Could benefit from review management"
-  ],
-  "sourceUrls": ["https://indeed.com/...", "https://yelp.com/..."]
-}
+Each object in the array must follow this exact structure:
+[
+  {
+    "businessName": "Summit HVAC Services",
+    "ownerName": "Mike Rivera",
+    "phone": "(512) 555-0188",
+    "email": "mike@summithvac.com",
+    "website": "summithvac.com",
+    "websiteQuality": "outdated, no online booking",
+    "address": "1234 Main St, Austin TX 78701",
+    "googleReviews": { "rating": 4.2, "count": 47 },
+    "socialMedia": { "facebook": "active", "instagram": "none", "linkedin": "none" },
+    "indeedHiring": ["HVAC Technician", "Office Manager"],
+    "estimatedRevenue": "$500K-1M",
+    "yearEstablished": "2019",
+    "niche": "${prospectNiche.trim() || "local business"}",
+    "buyingSignals": ["Hiring 2 positions on Indeed — scaling fast", "Website has no online booking"],
+    "opportunities": ["Needs lead capture automation", "Website rebuild opportunity"],
+    "sourceUrls": []
+  }
+]
 
-Return ${prospectCount} businesses. Use real data from your search. If you can't find a field, use empty string or empty array.`;
+Return exactly ${prospectCount} businesses. Use real data. If a field is unknown use empty string or empty array. DO NOT wrap in markdown code blocks.`;
 
     try {
       const response = await fetchWithRetry("/api/anthropic", {
@@ -529,7 +524,7 @@ Return ${prospectCount} businesses. Use real data from your search. If you can't
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
           max_tokens: 8000,
-          system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Respond with ONLY a raw JSON array. No markdown, no explanation — just [ ... ]. This is critical.",
+          system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Your response must be ONLY a valid JSON array — starting with [ and ending with ]. No markdown, no code fences, no explanation text before or after. If you include anything other than the JSON array, the response will fail to parse. Output the raw JSON array directly.",
           messages: [{ role: "user", content: prompt }],
           tools: [{ type: "web_search_20250305", name: "web_search" }],
         }),
