@@ -361,6 +361,7 @@ export default function LeadQualifier() {
   const [outreachStatuses, setOutreachStatuses] = useState({}); // { id: 'draft'|'sending'|'sent'|'replied' }
   const [sendingEmail, setSendingEmail] = useState(null);
   const [emailConfig, setEmailConfig] = useState({ host: "", port: 587, user: "", pass: "", fromName: "" });
+  const [addedToLeads, setAddedToLeads] = useState(new Set());
 
   const fileRef = useRef();
   const t = themes[theme];
@@ -838,6 +839,30 @@ Respond with ONLY this JSON structure, no markdown:
     }));
     setOutreachStatuses(prev => ({ ...prev, [prospect.id]: "draft" }));
     showToast(`${prospect.businessName} added to Outreach`);
+  };
+
+  const handleAddProspectToLeads = (prospect) => {
+    if (addedToLeads.has(prospect.id)) { showToast(`${prospect.businessName} already added to Leads`, "error"); return; }
+    const newLead = {
+      id: Date.now() + Math.random(),
+      createdAt: Date.now(),
+      name: prospect.ownerName || prospect.businessName,
+      company: prospect.businessName,
+      email: prospect.email || "",
+      phone: prospect.phone || "",
+      projectType: "",
+      budget: "",
+      location: prospect.address || "",
+      zipCode: "",
+      timeline: "",
+      description: prospect.buyingSignals ? prospect.buyingSignals.join("; ") : "",
+      source: "My Queue",
+      followUp: "new",
+      result: qualifyLead({ name: prospect.ownerName || prospect.businessName, company: prospect.businessName, email: prospect.email || "", phone: prospect.phone || "", projectType: "", budget: "", location: prospect.address || "", zipCode: "", timeline: "", description: "", source: "My Queue", followUp: "new" }, criteria, ind.typeName),
+    };
+    setLeads(prev => [newLead, ...prev]);
+    setAddedToLeads(prev => new Set([...prev, prospect.id]));
+    showToast(`${prospect.businessName} added to Leads`);
   };
 
   const handleSendEmail = async (prospect) => {
@@ -1699,6 +1724,11 @@ Respond with ONLY this JSON structure, no markdown:
                             onClick={() => handleAddToOutreach(p)}
                             style={{ ...btnSecondary, fontSize: 12, borderColor: outreachProspects.find(op => op.id === p.id) ? t.green : t.borderLight, color: outreachProspects.find(op => op.id === p.id) ? t.green : t.textMuted, background: outreachProspects.find(op => op.id === p.id) ? t.green + "11" : t.bgHover }}>
                             {outreachProspects.find(op => op.id === p.id) ? "✓ In Outreach" : "📤 Add to Outreach"}
+                          </button>
+                          <button
+                            onClick={() => handleAddProspectToLeads(p)}
+                            style={{ ...btnSecondary, fontSize: 12, borderColor: addedToLeads.has(p.id) ? t.accent : t.borderLight, color: addedToLeads.has(p.id) ? t.accent : t.textMuted, background: addedToLeads.has(p.id) ? t.accent + "11" : t.bgHover }}>
+                            {addedToLeads.has(p.id) ? "✓ In Leads" : "➕ Add to Leads"}
                           </button>
                         </div>
 
