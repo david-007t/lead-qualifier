@@ -17,14 +17,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["commercial", "residential", "industrial", "renovation", "infrastructure"],
     defaultBudget: [50000, 10000000],
-    demoLeads: [
-      { name: "Marcus Chen", company: "Pacific Ridge Developments", email: "mchen@pacificridge.com", phone: "(415) 555-0188", projectType: "commercial", budget: "2500000", location: "San Francisco", zipCode: "94102", timeline: "6-12", description: "New 8-story mixed commercial building downtown. Looking for full GC services.", source: "Website", followUp: "new" },
-      { name: "Sarah Williams", company: "Homestead Living", email: "sarah@homesteadliving.com", phone: "(408) 555-0234", projectType: "residential", budget: "180000", location: "San Jose", zipCode: "95112", timeline: "3-6", description: "Custom home addition — 2 bedrooms + bathroom, second floor.", source: "Referral", followUp: "contacted" },
-      { name: "David Park", company: "Park & Associates", email: "dpark@parkassoc.com", phone: "(510) 555-0091", projectType: "renovation", budget: "75000", location: "Oakland", zipCode: "94612", timeline: "0-3", description: "Office space renovation. 3,000 sq ft, needs new HVAC and electrical.", source: "Google Ads", followUp: "new" },
-      { name: "Linda Torres", company: "Torres Family Trust", email: "linda.torres@gmail.com", phone: "(650) 555-0377", projectType: "residential", budget: "35000", location: "Palo Alto", zipCode: "94301", timeline: "0-3", description: "Kitchen remodel — countertops, cabinets, flooring.", source: "Yelp", followUp: "new" },
-      { name: "James O'Brien", company: "Metro Industrial LLC", email: "jobrien@metroindustrial.com", phone: "(925) 555-0142", projectType: "industrial", budget: "5000000", location: "Concord", zipCode: "94520", timeline: "12-24", description: "120,000 sq ft warehouse build-out with cold storage.", source: "Trade Show", followUp: "meeting" },
-      { name: "Priya Sharma", company: "Bay Area Schools District", email: "psharma@bayareasd.org", phone: "(408) 555-0456", projectType: "government", budget: "8000000", location: "Sunnyvale", zipCode: "94086", timeline: "12-24", description: "New elementary school campus — full design-build.", source: "RFP", followUp: "new" },
-    ],
   },
   gov_contracting: {
     label: "Government Contracting", icon: "🏛", typeName: "Contract Type", leadNoun: "contract",
@@ -41,11 +33,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["federal", "state", "local", "technology"],
     defaultBudget: [25000, 50000000],
-    demoLeads: [
-      { name: "GSA Region 9", company: "General Services Administration", email: "", phone: "", projectType: "federal", budget: "2400000", location: "San Francisco", zipCode: "94102", timeline: "6-12", description: "IT modernization services for federal office buildings. Full stack development and cloud migration.", source: "SAM.gov", followUp: "new" },
-      { name: "CA Dept of Transportation", company: "Caltrans", email: "procure@dot.ca.gov", phone: "", projectType: "state", budget: "8500000", location: "Sacramento", zipCode: "95814", timeline: "12-24", description: "Highway signage replacement program — 200+ signs across Northern California.", source: "CaleProcure", followUp: "new" },
-      { name: "City of Oakland", company: "Public Works Dept", email: "", phone: "(510) 555-0300", projectType: "local", budget: "750000", location: "Oakland", zipCode: "94612", timeline: "3-6", description: "Park facility upgrades — ADA compliance improvements across 12 city parks.", source: "City Portal", followUp: "contacted" },
-    ],
   },
   marketing: {
     label: "Marketing / Creative", icon: "📣", typeName: "Service Type", leadNoun: "engagement",
@@ -62,11 +49,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["branding", "digital", "content", "web_design"],
     defaultBudget: [5000, 500000],
-    demoLeads: [
-      { name: "Jessica Torres", company: "Bloom Organics", email: "jess@bloomorganics.com", phone: "(512) 555-0188", projectType: "branding", budget: "45000", location: "Austin", zipCode: "78701", timeline: "3-6", description: "Full rebrand for organic skincare DTC brand. Logo, packaging, brand guidelines.", source: "RFP Database", followUp: "new" },
-      { name: "Mike Chang", company: "NovaTech Solutions", email: "mchang@novatech.io", phone: "(415) 555-0291", projectType: "digital", budget: "120000", location: "San Francisco", zipCode: "94105", timeline: "6-12", description: "Agency of record search — lead gen, PPC, SEO for B2B SaaS.", source: "LinkedIn", followUp: "contacted" },
-      { name: "City of Denver", company: "Tourism Board", email: "marketing@visitdenver.org", phone: "", projectType: "content", budget: "200000", location: "Denver", zipCode: "80202", timeline: "3-6", description: "Tourism campaign — content creation, social, and influencer strategy.", source: "Gov RFP", followUp: "new" },
-    ],
   },
   it_consulting: {
     label: "IT / Software Consulting", icon: "💻", typeName: "Project Type", leadNoun: "project",
@@ -83,10 +65,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["dev", "cloud", "cyber", "data", "consulting"],
     defaultBudget: [25000, 5000000],
-    demoLeads: [
-      { name: "State of Oregon", company: "Dept of Admin Services", email: "", phone: "", projectType: "dev", budget: "1200000", location: "Salem", zipCode: "97301", timeline: "6-12", description: "Legacy system modernization — migrate mainframe applications to cloud-native architecture.", source: "State Procurement", followUp: "new" },
-      { name: "Rachel Kim", company: "MedFirst Health System", email: "rkim@medfirst.org", phone: "(503) 555-0144", projectType: "cyber", budget: "350000", location: "Portland", zipCode: "97204", timeline: "3-6", description: "HIPAA compliance audit and security hardening for 40+ clinic network.", source: "Referral", followUp: "meeting" },
-    ],
   },
   real_estate: {
     label: "Real Estate / Development", icon: "🏠", typeName: "Opportunity Type", leadNoun: "opportunity",
@@ -102,10 +80,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["commercial_re", "residential_re", "multifamily", "land"],
     defaultBudget: [100000, 50000000],
-    demoLeads: [
-      { name: "Greenfield Capital", company: "Greenfield Capital LLC", email: "deals@greenfieldcap.com", phone: "(303) 555-0210", projectType: "multifamily", budget: "12000000", location: "Denver", zipCode: "80205", timeline: "12-24", description: "48-unit apartment complex approved for construction. Seeking development partners.", source: "LoopNet", followUp: "new" },
-      { name: "City of Boise Planning", company: "City of Boise", email: "", phone: "", projectType: "mixed_use_re", budget: "25000000", location: "Boise", zipCode: "83702", timeline: "24+", description: "Downtown redevelopment zone — 4 blocks rezoned for mixed-use. Developer proposals welcome.", source: "City Website", followUp: "new" },
-    ],
   },
   landscaping: {
     label: "Landscaping / Trades", icon: "🌿", typeName: "Job Type", leadNoun: "job",
@@ -121,10 +95,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["commercial_ls", "municipal", "hoa", "design_build"],
     defaultBudget: [5000, 500000],
-    demoLeads: [
-      { name: "Sunnydale HOA", company: "Sunnydale Community Mgmt", email: "board@sunnydalehoa.com", phone: "(480) 555-0133", projectType: "hoa", budget: "85000", location: "Scottsdale", zipCode: "85254", timeline: "0-3", description: "Annual grounds maintenance contract — 340 homes, common areas, pool landscaping.", source: "HOA Board Posting", followUp: "new" },
-      { name: "City of Tempe", company: "Parks & Rec Dept", email: "", phone: "(480) 555-0400", projectType: "municipal", budget: "220000", location: "Tempe", zipCode: "85281", timeline: "3-6", description: "Streetscape beautification project — 2 miles of median planting and irrigation.", source: "City Procurement", followUp: "new" },
-    ],
   },
   cleaning: {
     label: "Cleaning / Facilities", icon: "🧹", typeName: "Service Type", leadNoun: "contract",
@@ -140,10 +110,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["office", "medical", "education_cl", "government_cl"],
     defaultBudget: [10000, 1000000],
-    demoLeads: [
-      { name: "HealthPoint Clinics", company: "HealthPoint Medical Group", email: "facilities@healthpoint.com", phone: "(206) 555-0187", projectType: "medical", budget: "180000", location: "Seattle", zipCode: "98101", timeline: "0-3", description: "Janitorial services for 8-clinic network. Must be ISSA CIMS certified.", source: "RFP Portal", followUp: "new" },
-      { name: "Portland Public Schools", company: "PPS Facilities", email: "", phone: "", projectType: "education_cl", budget: "450000", location: "Portland", zipCode: "97204", timeline: "3-6", description: "Annual custodial contract for 12 elementary schools. Summer deep clean included.", source: "District Procurement", followUp: "new" },
-    ],
   },
   events: {
     label: "Events / Catering", icon: "🎪", typeName: "Event Type", leadNoun: "event",
@@ -159,10 +125,6 @@ const INDUSTRIES = {
     ],
     defaultTypes: ["corporate", "conference", "nonprofit", "catering_only"],
     defaultBudget: [5000, 500000],
-    demoLeads: [
-      { name: "TechCrunch Events", company: "TechCrunch / Yahoo", email: "events@techcrunch.com", phone: "", projectType: "conference", budget: "350000", location: "San Francisco", zipCode: "94105", timeline: "6-12", description: "Seeking catering + event production for 2-day tech conference. 2,000 attendees.", source: "Event Planner Network", followUp: "new" },
-      { name: "SF Arts Foundation", company: "SFAF", email: "gala@sfaf.org", phone: "(415) 555-0366", projectType: "nonprofit", budget: "95000", location: "San Francisco", zipCode: "94102", timeline: "3-6", description: "Annual fundraising gala — 400 guests, plated dinner, full bar, entertainment coordination.", source: "Nonprofit Directory", followUp: "contacted" },
-    ],
   },
 };
 
@@ -479,17 +441,6 @@ export default function LeadQualifier() {
     };
     reader.readAsText(file);
     e.target.value = "";
-  };
-
-  const loadDemoData = () => {
-    const DEMO_LEADS = ind.demoLeads || [];
-    if (DEMO_LEADS.length === 0) { showToast("No demo data for this industry", "error"); return; }
-    const demoLeads = DEMO_LEADS.map((l, i) => ({
-      ...l, id: Date.now() + i + Math.random(), createdAt: Date.now() - i * 86400000,
-      result: qualifyLead(l, criteria, ind.typeName),
-    }));
-    setLeads(prev => [...demoLeads, ...prev]);
-    showToast(`${DEMO_LEADS.length} demo leads loaded`);
   };
 
   const requalifyAll = () => {
@@ -1082,7 +1033,6 @@ Respond with ONLY this JSON structure, no markdown:
                 <p style={{ color: "#a8a29e", fontSize: 14, marginBottom: 32, lineHeight: 1.6 }}>{companyName ? `${companyName} is` : "Your qualifier is"} ready to go. Want to load some sample leads to see how it works?</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <button onClick={() => { setSetupComplete(true); setTab("prospects"); }} style={{ ...btnPrimary, width: "100%", padding: "14px 40px", fontSize: 15 }}>⚡ Find Prospects →</button>
-                  <button onClick={() => { setSetupComplete(true); setTab("dashboard"); loadDemoData(); }} style={{ ...btnSecondary, width: "100%", padding: "12px 40px", background: "#1c1917" }}>Load Demo Leads & Explore</button>
                   <button onClick={() => { setSetupComplete(true); setTab("add"); }} style={{ ...btnSecondary, width: "100%", padding: "12px 40px", background: "#1c1917" }}>Start Empty — I'll Add My Own</button>
                   <button onClick={() => setSetupStep(1)} style={{ background: "transparent", border: "none", color: "#78716c", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 8 }}>← Back to Criteria</button>
                 </div>
@@ -1233,7 +1183,6 @@ Respond with ONLY this JSON structure, no markdown:
                   <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                     <button onClick={() => setTab("prospects")} style={btnPrimary}>⚡ Find Prospects</button>
                     <button onClick={() => setTab("add")} style={btnSecondary}>+ Add Manually</button>
-                    <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
                   </div>
                 </div>
               ) : (
@@ -1347,7 +1296,6 @@ Respond with ONLY this JSON structure, no markdown:
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
                 <h2 style={{ fontSize: 18, fontWeight: 700, fontFamily: "'Outfit', sans-serif" }}>New Lead Entry</h2>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
                   <button onClick={() => setShowUpload(!showUpload)} style={btnSecondary}>{showUpload ? "✕ Close Upload" : "↑ CSV Upload"}</button>
                 </div>
               </div>
@@ -1401,7 +1349,6 @@ Respond with ONLY this JSON structure, no markdown:
                   <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                     <button onClick={() => setTab("prospects")} style={btnPrimary}>⚡ Find Prospects</button>
                     <button onClick={() => setTab("add")} style={btnSecondary}>+ Add Manually</button>
-                    <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
                   </div>
                 </div>
               ) : (
