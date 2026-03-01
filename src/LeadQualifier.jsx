@@ -305,6 +305,7 @@ export default function LeadQualifier() {
   const [prospects, setProspects] = useState([]);
   const [prospectLoading, setProspectLoading] = useState(false);
   const [prospectError, setProspectError] = useState(null);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [expandedProspect, setExpandedProspect] = useState(null);
   const [draftingEmail, setDraftingEmail] = useState(null);
   const [emailDrafts, setEmailDrafts] = useState({});
@@ -449,7 +450,7 @@ export default function LeadQualifier() {
     setSettingsEdited(false);
   };
 
-  // ─── PROSPECT SEARCH (Multi-pass deep search) ────────────
+  // ─── PROSPECT SEARCH (Batched to avoid 60s Vercel timeout) ──
   const handleProspectSearch = async () => {
     if (!prospectCity.trim()) { showToast("Enter a city or region", "error"); return; }
     setProspectLoading(true);
@@ -472,30 +473,33 @@ export default function LeadQualifier() {
     if (prospectFilters.runningAds) hardRequirements.push("MUST be currently running paid ads on Google or Facebook.");
     if (prospectFilters.recentlyStarted) hardRequirements.push("MUST be a recently started business — established within the last 3 years.");
 
-    const nicheLabel = prospectNiche.trim() || "local";
     const searchQuery = prospectNiche.trim() ? `${prospectNiche} companies in ${prospectCity.trim()}` : `small businesses in ${prospectCity.trim()}`;
-
-    // Build exclusion list from existing pipeline + outreach
-    const excludedNames = [
-      ...leads.map(l => l.company || l.name),
-      ...outreachProspects.map(p => p.businessName),
-    ].filter(Boolean);
-    const exclusionClause = excludedNames.length > 0
-      ? `\n\nIMPORTANT — Do NOT include any of these businesses, they are already in our pipeline:\n${excludedNames.map(n => `- ${n}`).join("\n")}\n`
-      : "";
-
     const nicheInstruction = prospectNiche.trim()
       ? `Focus specifically on ${prospectNiche} businesses.`
       : `Find a variety of local service businesses (e.g. HVAC, plumbing, roofing, cleaning, landscaping, auto repair, dental, gyms, restaurants — any small business that could benefit from better marketing, web presence, or automation).`;
 
-    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find businesses in ${prospectCity.trim()} that need their services.${exclusionClause}
+    // Pipeline exclusions (fixed — doesn't grow)
+    const pipelineExcluded = [
+      ...leads.map(l => l.company || l.name),
+      ...outreachProspects.map(p => p.businessName),
+    ].filter(Boolean);
+
+    const BATCH_SIZE = 5;
+    const numBatches = Math.ceil(prospectCount / BATCH_SIZE);
+    setBatchProgress({ current: 0, total: numBatches });
+
+    const buildPrompt = (batchCount, excludedNames) => {
+      const exclusionClause = excludedNames.length > 0
+        ? `\n\nIMPORTANT — Do NOT include any of these businesses (already in pipeline or found in earlier batches):\n${excludedNames.map(n => `- ${n}`).join("\n")}\n`
+        : "";
+      return `You are helping a digital agency find businesses in ${prospectCity.trim()} that need their services.${exclusionClause}
 
 ${nicheInstruction}
 
-TASK: Search for "${searchQuery}" and find ${prospectCount} real local businesses. Then for each, gather additional info.
+TASK: Search for "${searchQuery}" and find ${batchCount} real local businesses. Then for each, gather additional info.
 ${hardRequirements.length > 0 ? `\nHARD REQUIREMENTS — every business returned MUST satisfy ALL of the following:\n${hardRequirements.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nDo NOT include any business that does not meet these requirements. If you cannot find enough qualifying businesses, return fewer results rather than including ones that don't qualify.\n` : ""}
 Search steps:
-1. Find ${prospectCount} real businesses with names, addresses, phone numbers, websites
+1. Find ${batchCount} real businesses with names, addresses, phone numbers, websites
 2. For each business check: Indeed job postings, Google reviews, Facebook/Instagram/LinkedIn presence, website quality, any ad activity
 3. Identify buying signals${filterList.length > 0 ? `: ${filterList.join(", ")}` : ""}
 
@@ -519,9 +523,7 @@ Each object in the array must follow this exact structure:
     "linkedinJobs": [
       { "title": "Office Manager", "summary": "Part-time, admin experience preferred", "applyUrl": "https://www.linkedin.com/jobs/view/..." }
     ],
-    "website": "summithvac.com",
     "websiteStatus": "bad",
-    "websiteQuality": "outdated design, no online booking or lead capture form",
     "estimatedRevenue": "$500K-1M",
     "yearEstablished": "2019",
     "niche": "${prospectNiche.trim() || "local business"}",
@@ -538,49 +540,18 @@ IMPORTANT FIELD RULES:
 - "linkedinJobs": array of job objects from LinkedIn. Empty array if none found.
 - "socialMedia": check all 5 platforms. Use "active" if they post regularly, "inactive" if account exists but rarely posts, "none" if no presence found.
 
-Return exactly ${prospectCount} businesses. Use real data. If a field is unknown use empty string or empty array. DO NOT wrap in markdown code blocks.`;
+Return exactly ${batchCount} businesses. Use real data. If a field is unknown use empty string or empty array. DO NOT wrap in markdown code blocks.`;
+    };
 
-    try {
-      const response = await fetchWithRetry("/api/anthropic", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-5",
-          max_tokens: 8000,
-          system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Your response must be ONLY a valid JSON array — starting with [ and ending with ]. No markdown, no code fences, no explanation text before or after. If you include anything other than the JSON array, the response will fail to parse. Output the raw JSON array directly.",
-          messages: [{ role: "user", content: prompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
-      });
-      const data = await response.json();
-      if (data.error) {
-        const msg = data.error.message || "API error";
-        console.error("[ProspectSearch] API error:", data.error);
-        setProspectError(`API error: ${msg}. Check that your Anthropic API key is set correctly in Vercel.`);
-        setProspectLoading(false);
-        return;
-      }
-
-      // Extract all text from response blocks
-      const textParts = [];
-      (data.content || []).forEach(block => {
-        if (block.type === "text" && block.text) textParts.push(block.text);
-      });
-      const fullText = textParts.join("\n");
-      console.log("[ProspectSearch] Raw response length:", fullText.length);
-      console.log("[ProspectSearch] Raw response preview:", fullText.slice(0, 500));
-
-      // Try multiple strategies to extract JSON array
+    const parseResponse = (fullText) => {
       let parsed = null;
       let parseError = "";
-
-      // Strategy 1: Find JSON array in code fences
+      // Strategy 1: JSON in code fences
       const fenceMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
       if (fenceMatch) {
         try { parsed = JSON.parse(fenceMatch[1]); } catch (e) { parseError = `Fence parse failed: ${e.message}`; }
       }
-
-      // Strategy 2: Greedy — find anything that looks like a JSON array with objects
+      // Strategy 2: Greedy array match
       if (!parsed) {
         const greedyMatch = fullText.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (greedyMatch) {
@@ -589,8 +560,7 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
           }
         }
       }
-
-      // Strategy 3: Find last [ ... ] block in text
+      // Strategy 3: Last [ ... ] block
       if (!parsed) {
         const lastBracket = fullText.lastIndexOf("[");
         if (lastBracket !== -1) {
@@ -598,19 +568,12 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
           try { const candidate = JSON.parse(slice); if (Array.isArray(candidate) && candidate.length > 0) parsed = candidate; } catch (e) { parseError = `Last-bracket parse failed: ${e.message}`; }
         }
       }
+      return { parsed, parseError };
+    };
 
-      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-        console.error("[ProspectSearch] Parse failed. Error:", parseError, "| Full text:", fullText);
-        const suggestion = prospectNiche.trim()
-          ? `Try reducing results to 5, or broaden the niche (e.g. "contractors" instead of a specific trade).`
-          : `Try adding a specific niche (e.g. "HVAC" or "roofing") to get more targeted results.`;
-        setProspectError(`No results parsed from AI response. ${suggestion}\n\nDebug: ${parseError || "Empty or non-array response"}`);
-        setProspectLoading(false);
-        return;
-      }
-
-      const results = parsed.map((r, i) => ({
-        id: Date.now() + i + Math.random(),
+    const normalizeResults = (parsed, offset) => parsed.map((r, i) => {
+      const p = {
+        id: Date.now() + offset + i + Math.random(),
         businessName: r.businessName || "Unknown Business",
         ownerName: r.ownerName || "",
         phone: r.phone || "",
@@ -621,7 +584,6 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
         address: r.address || "",
         googleReviews: r.googleReviews || { rating: 0, count: 0 },
         socialMedia: r.socialMedia || { facebook: "none", instagram: "none", linkedin: "none", tiktok: "none", youtube: "none" },
-        // Normalize indeedHiring: handle both old string[] and new object[] format
         indeedHiring: (r.indeedHiring || []).map(j => typeof j === "string" ? { title: j, summary: "", applyUrl: "" } : j),
         linkedinJobs: (r.linkedinJobs || []).map(j => typeof j === "string" ? { title: j, summary: "", applyUrl: "" } : j),
         estimatedRevenue: r.estimatedRevenue || "",
@@ -631,19 +593,93 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
         opportunities: r.opportunities || [],
         sourceUrls: r.sourceUrls || [],
         classification: null,
-      }));
+      };
+      p.classification = classifyProspect(p);
+      return p;
+    });
 
-      // Auto-classify each prospect
-      results.forEach(p => { p.classification = classifyProspect(p); });
+    let allResults = [];
 
-      setProspects(results);
-      showToast(`Found ${results.length} prospects`);
-    } catch (err) {
-      console.error("[ProspectSearch] Unexpected error:", err);
-      const isNetwork = err.message?.includes("fetch") || err.message?.includes("network");
-      setProspectError(`Search failed: ${err.message || "Unknown error"}. ${isNetwork ? "Check your internet connection and try again." : "Try reducing the result count or adding a specific niche."}`);
+    for (let batch = 0; batch < numBatches; batch++) {
+      setBatchProgress({ current: batch + 1, total: numBatches });
+      const batchCount = Math.min(BATCH_SIZE, prospectCount - batch * BATCH_SIZE);
+      const excludedNames = [...pipelineExcluded, ...allResults.map(r => r.businessName)].filter(Boolean);
+
+      try {
+        const response = await fetchWithRetry("/api/anthropic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-5",
+            max_tokens: 8000,
+            system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Your response must be ONLY a valid JSON array — starting with [ and ending with ]. No markdown, no code fences, no explanation text before or after. If you include anything other than the JSON array, the response will fail to parse. Output the raw JSON array directly.",
+            messages: [{ role: "user", content: buildPrompt(batchCount, excludedNames) }],
+            tools: [{ type: "web_search_20250305", name: "web_search" }],
+          }),
+        });
+        const data = await response.json();
+
+        if (data.error) {
+          const msg = data.error.message || "API error";
+          console.error(`[ProspectSearch] Batch ${batch + 1} API error:`, data.error);
+          if (allResults.length > 0) {
+            showToast(`Batch ${batch + 1} failed — showing ${allResults.length} results`, "error");
+          } else {
+            setProspectError(`API error: ${msg}. Check that your Anthropic API key is set correctly in Vercel.`);
+            setProspectLoading(false);
+            setBatchProgress({ current: 0, total: 0 });
+            return;
+          }
+          break;
+        }
+
+        const textParts = [];
+        (data.content || []).forEach(block => { if (block.type === "text" && block.text) textParts.push(block.text); });
+        const fullText = textParts.join("\n");
+        console.log(`[ProspectSearch] Batch ${batch + 1} response length:`, fullText.length);
+
+        const { parsed, parseError } = parseResponse(fullText);
+
+        if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+          console.error(`[ProspectSearch] Batch ${batch + 1} parse failed:`, parseError, fullText.slice(0, 300));
+          if (allResults.length > 0) {
+            showToast(`Batch ${batch + 1} returned no results — showing ${allResults.length} found so far`, "error");
+          } else {
+            const suggestion = prospectNiche.trim()
+              ? `Try reducing results to 5, or broaden the niche (e.g. "contractors" instead of a specific trade).`
+              : `Try adding a specific niche (e.g. "HVAC" or "roofing") to get more targeted results.`;
+            setProspectError(`No results parsed from AI response. ${suggestion}\n\nDebug: ${parseError || "Empty or non-array response"}`);
+            setProspectLoading(false);
+            setBatchProgress({ current: 0, total: 0 });
+            return;
+          }
+          break;
+        }
+
+        const batchResults = normalizeResults(parsed, allResults.length);
+        allResults = [...allResults, ...batchResults];
+        setProspects([...allResults]); // Show results progressively
+        console.log(`[ProspectSearch] Batch ${batch + 1} complete — total: ${allResults.length}`);
+
+      } catch (err) {
+        console.error(`[ProspectSearch] Batch ${batch + 1} error:`, err);
+        const isTimeout = err.message?.includes("timeout") || err.message?.includes("504") || err.message?.includes("524");
+        if (allResults.length > 0) {
+          showToast(`Batch ${batch + 1} ${isTimeout ? "timed out" : "failed"} — showing ${allResults.length} results`, "error");
+        } else {
+          const isNetwork = err.message?.includes("fetch") || err.message?.includes("network");
+          setProspectError(`Search failed: ${err.message || "Unknown error"}. ${isTimeout ? "The search timed out — try reducing the result count to 5." : isNetwork ? "Check your internet connection and try again." : "Try reducing the result count or adding a specific niche."}`);
+          setProspectLoading(false);
+          setBatchProgress({ current: 0, total: 0 });
+          return;
+        }
+        break;
+      }
     }
+
+    if (allResults.length > 0) showToast(`Found ${allResults.length} prospects`);
     setProspectLoading(false);
+    setBatchProgress({ current: 0, total: 0 });
   };
 
   // ─── EMAIL DRAFT GENERATION ──────────────────────────────
@@ -1765,14 +1801,32 @@ Respond with ONLY this JSON structure, no markdown:
               </div>
 
               {prospectLoading && (
-                <div style={{ ...cardStyle, textAlign: "center", padding: "48px 24px" }}>
-                  <div style={{ fontSize: 36, marginBottom: 16, animation: "pulse 1.2s infinite" }}>🔍</div>
-                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Deep search in progress...</div>
-                  <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.5 }}>
-                    Step 1: Finding {prospectNiche.trim() || "local"} businesses in {prospectCity}<br />
-                    Step 2: Checking Indeed, Google, social media<br />
-                    Step 3: Identifying buying signals
+                <div style={{ ...cardStyle, textAlign: "center", padding: "32px 24px" }}>
+                  <div style={{ fontSize: 36, marginBottom: 12, animation: "pulse 1.2s infinite" }}>🔍</div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+                    {batchProgress.total > 1
+                      ? `Searching batch ${batchProgress.current} of ${batchProgress.total}…`
+                      : "Deep search in progress…"}
                   </div>
+                  {batchProgress.total > 1 && prospects.length > 0 && (
+                    <div style={{ fontSize: 13, color: t.green, fontWeight: 600, marginBottom: 6 }}>
+                      ✓ {prospects.length} results found so far
+                    </div>
+                  )}
+                  <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.5 }}>
+                    {batchProgress.total > 1 ? (
+                      <>Searching for {prospectNiche.trim() || "local"} businesses in {prospectCity} · {batchProgress.total} batches of 5</>
+                    ) : (
+                      <>Step 1: Finding {prospectNiche.trim() || "local"} businesses in {prospectCity}<br />
+                      Step 2: Checking Indeed, Google, social media<br />
+                      Step 3: Identifying buying signals</>
+                    )}
+                  </div>
+                  {batchProgress.total > 1 && (
+                    <div style={{ marginTop: 12, height: 4, background: t.bgHover, borderRadius: 2, maxWidth: 300, margin: "12px auto 0" }}>
+                      <div style={{ height: "100%", background: t.accent, borderRadius: 2, width: `${(batchProgress.current / batchProgress.total) * 100}%`, transition: "width 0.4s ease" }} />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1782,9 +1836,11 @@ Respond with ONLY this JSON structure, no markdown:
                 </div>
               )}
 
-              {prospects.length > 0 && !prospectLoading && (
+              {prospects.length > 0 && (
                 <div style={{ marginTop: 20 }}>
-                  <div style={{ marginBottom: 16, fontSize: 15, fontWeight: 700 }}>Found {prospects.length} prospects</div>
+                  <div style={{ marginBottom: 16, fontSize: 15, fontWeight: 700 }}>
+                    {prospectLoading ? `Found ${prospects.length} so far…` : `Found ${prospects.length} prospects`}
+                  </div>
                   <div style={{ display: "grid", gap: 16 }}>
                     {prospects.map(p => (
                       <div key={p.id} style={{ ...cardStyle, borderLeft: `4px solid ${p.classification.color}` }}>
