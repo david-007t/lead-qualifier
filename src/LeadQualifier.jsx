@@ -466,7 +466,17 @@ export default function LeadQualifier() {
 
     const nicheLabel = prospectNiche.trim() || "local";
     const searchQuery = prospectNiche.trim() ? `${prospectNiche} companies in ${prospectCity.trim()}` : `small businesses in ${prospectCity.trim()}`;
-    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${nicheLabel} businesses in ${prospectCity.trim()} that need their services.
+
+    // Build exclusion list from existing pipeline + outreach
+    const excludedNames = [
+      ...leads.map(l => l.company || l.name),
+      ...outreachProspects.map(p => p.businessName),
+    ].filter(Boolean);
+    const exclusionClause = excludedNames.length > 0
+      ? `\n\nIMPORTANT — Do NOT include any of these businesses, they are already in our pipeline:\n${excludedNames.map(n => `- ${n}`).join("\n")}\n`
+      : "";
+
+    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${nicheLabel} businesses in ${prospectCity.trim()} that need their services.${exclusionClause}
 
 MULTI-STEP SEARCH PROCESS:
 
