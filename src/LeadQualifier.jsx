@@ -257,6 +257,21 @@ function parseCSV(text) {
   });
 }
 
+// ─── PROSPECT CLASSIFICATION ──────────────────────────────────
+function classifyProspect(prospect) {
+  const hasOwner = !!(prospect.ownerName && prospect.ownerName.trim());
+  const hasDirectContact = !!(prospect.email && prospect.email.trim()) || !!(prospect.phone && prospect.phone.trim());
+  const signalCount = (prospect.buyingSignals || []).length;
+
+  if (hasOwner && hasDirectContact && signalCount >= 2) {
+    return { tier: "WARM", emoji: "🟢", color: "#34d399" };
+  } else if (hasDirectContact && signalCount >= 1) {
+    return { tier: "COOL", emoji: "🟡", color: "#f59e0b" };
+  } else {
+    return { tier: "COLD", emoji: "🔴", color: "#f87171" };
+  }
+}
+
 // ─── THEME DEFINITIONS ────────────────────────────────────────
 const themes = {
   dark: {
@@ -319,13 +334,27 @@ export default function LeadQualifier() {
   const [sortDir, setSortDir] = useState("desc");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Lead finder state
-  const [finderCity, setFinderCity] = useState("");
-  const [finderTypes, setFinderTypes] = useState(["commercial", "residential", "renovation"]);
-  const [finderResults, setFinderResults] = useState([]);
-  const [finderLoading, setFinderLoading] = useState(false);
-  const [finderError, setFinderError] = useState(null);
-  const [finderSearchCount, setFinderSearchCount] = useState(0);
+  // Prospect search state (replaces finder)
+  const [prospectCity, setProspectCity] = useState("");
+  const [prospectNiche, setProspectNiche] = useState("");
+  const [prospectCount, setProspectCount] = useState(10);
+  const [prospectFilters, setProspectFilters] = useState({
+    hiringOnIndeed: true,
+    badWebsite: true,
+    lowReviews: true,
+    noSocial: true,
+    runningAds: true,
+    recentlyStarted: true,
+  });
+  const [prospects, setProspects] = useState([]);
+  const [prospectLoading, setProspectLoading] = useState(false);
+  const [prospectError, setProspectError] = useState(null);
+  const [expandedProspect, setExpandedProspect] = useState(null);
+  const [draftingEmail, setDraftingEmail] = useState(null);
+  const [emailDrafts, setEmailDrafts] = useState({});
+
+  // Joe's Queue state
+  const [queueActions, setQueueActions] = useState({});
 
   const fileRef = useRef();
   const t = themes[theme];
@@ -345,7 +374,6 @@ export default function LeadQualifier() {
         if (savedSettings.theme) setTheme(savedSettings.theme);
         if (savedSettings.industry) {
           setIndustry(savedSettings.industry);
-          setFinderTypes([...(INDUSTRIES[savedSettings.industry]?.defaultTypes || INDUSTRIES.construction.defaultTypes)]);
         }
         if (savedSettings.setupComplete) { setSetupComplete(true); setTab("dashboard"); }
       }
@@ -456,35 +484,67 @@ export default function LeadQualifier() {
     setSettingsEdited(false);
   };
 
-  // ─── LEAD FINDER (AI + WEB SEARCH) ───────────────────────
-  const handleFindLeads = async () => {
-    if (!finderCity.trim()) { showToast("Enter a city or region to search", "error"); return; }
-    setFinderLoading(true);
-    setFinderError(null);
-    setFinderResults([]);
-    const typeLabels = finderTypes.map(id => PROJECT_TYPES.find(pt => pt.id === id)?.label || id).join(", ");
-    const typeIds = PROJECT_TYPES.map(pt => pt.id).join(", ");
-    const prompt = `Search the web for real, current ${ind.label.toLowerCase()} opportunities in or near ${finderCity.trim()}.
+  // ─── PROSPECT SEARCH (Multi-pass deep search) ────────────
+  const handleProspectSearch = async () => {
+    if (!prospectCity.trim()) { showToast("Enter a city or region", "error"); return; }
+    if (!prospectNiche.trim()) { showToast("Enter a business niche", "error"); return; }
+    setProspectLoading(true);
+    setProspectError(null);
+    setProspects([]);
 
-Specifically look for: ${ind.searchTerms}
+    const filterList = [];
+    if (prospectFilters.hiringOnIndeed) filterList.push("Hiring on Indeed (growth signal)");
+    if (prospectFilters.badWebsite) filterList.push("No website or bad website");
+    if (prospectFilters.lowReviews) filterList.push("Low/few Google reviews (<20 reviews or <4.0 stars)");
+    if (prospectFilters.noSocial) filterList.push("No social media presence");
+    if (prospectFilters.runningAds) filterList.push("Running ads (Google/Facebook)");
+    if (prospectFilters.recentlyStarted) filterList.push("Recently started business");
 
-Focus on these ${ind.typeName.toLowerCase()}s: ${typeLabels}.
+    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${prospectNiche} businesses in ${prospectCity.trim()} that need their services.
 
-Find 5-8 real opportunities. For each, extract as much of the following as possible:
-- ${ind.leadNoun.charAt(0).toUpperCase() + ind.leadNoun.slice(1)} name or description
-- Company or organization involved  
-- Estimated budget or contract value (if mentioned)
-- ${ind.typeName} (must be one of: ${typeIds})
-- Location (city)
-- ZIP code if available
-- Timeline or expected completion
-- Any contact info (name, email, phone)
-- Source URL where you found it
+MULTI-STEP SEARCH PROCESS:
 
-Respond ONLY with a JSON array. No other text. Each object should have these fields:
-{"name":"contact person or org name","company":"company or agency","email":"","phone":"","projectType":"${PROJECT_TYPES[0]?.id || 'unknown'}","budget":"500000","location":"city","zipCode":"","timeline":"6-12","description":"what the ${ind.leadNoun} is","source":"where you found it","sourceUrl":"URL"}
+Step 1: Search for "${prospectNiche} companies in ${prospectCity.trim()}" — find ${prospectCount} real businesses with names, addresses, phone numbers, websites.
 
-If you can't find a specific field, use empty string. For timeline, use one of: 0-3, 3-6, 6-12, 12-24, 24+. For budget, use just the number (no $ or commas). Return ONLY the JSON array.`;
+Step 2: For each business found, search for:
+- Their Indeed job postings (hiring = growth signal)
+- Google reviews (rating and count)
+- Facebook/Instagram presence
+- Website quality (modern vs outdated, has online booking/lead capture?)
+- Any signs they're running ads
+
+Step 3: Identify buying signals based on these filters: ${filterList.join(", ")}
+
+RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation. Each object must have:
+
+{
+  "businessName": "Summit HVAC Services",
+  "ownerName": "Mike Rivera",
+  "phone": "(512) 555-0188",
+  "email": "mike@summithvac.com",
+  "website": "summithvac.com",
+  "websiteQuality": "outdated, no online booking",
+  "address": "1234 Main St, Austin TX 78701",
+  "googleReviews": { "rating": 4.2, "count": 47 },
+  "socialMedia": { "facebook": "active", "instagram": "none", "linkedin": "none" },
+  "indeedHiring": ["HVAC Technician", "Office Manager"],
+  "estimatedRevenue": "$500K-1M",
+  "yearEstablished": "2019",
+  "niche": "${prospectNiche}",
+  "buyingSignals": [
+    "Hiring 2 positions on Indeed — scaling fast",
+    "Website has no online booking or lead capture",
+    "No Instagram presence"
+  ],
+  "opportunities": [
+    "Needs lead capture automation",
+    "Website rebuild opportunity",
+    "Could benefit from review management"
+  ],
+  "sourceUrls": ["https://indeed.com/...", "https://yelp.com/..."]
+}
+
+Return ${prospectCount} businesses. Use real data from your search. If you can't find a field, use empty string or empty array.`;
 
     try {
       const response = await fetch("/api/anthropic", {
@@ -492,8 +552,8 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          system: "You are a lead research assistant. After searching the web, you MUST respond with ONLY a raw JSON array of objects. No explanation, no markdown, no commentary — just the JSON array starting with [ and ending with ]. This is critical for automated parsing.",
+          max_tokens: 8000,
+          system: "You are a business research assistant for a digital agency. Search the web thoroughly for real businesses. Respond with ONLY a raw JSON array. No markdown, no explanation — just [ ... ]. This is critical.",
           messages: [{ role: "user", content: prompt }],
           tools: [{ type: "web_search_20250305", name: "web_search" }],
         }),
@@ -536,53 +596,92 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
         }
       }
       
-      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) { 
-        setFinderError("No structured results found. Try a larger metro area or different " + ind.typeName.toLowerCase() + "s."); 
-        setFinderLoading(false); 
-        return; 
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+        setProspectError("No businesses found. Try a larger city or different niche.");
+        setProspectLoading(false);
+        return;
       }
+
       const results = parsed.map((r, i) => ({
-        ...EMPTY_LEAD,
-        name: r.name || r.company || "Unknown",
-        company: r.company || "",
-        email: r.email || "",
+        id: Date.now() + i + Math.random(),
+        businessName: r.businessName || "Unknown Business",
+        ownerName: r.ownerName || "",
         phone: r.phone || "",
-        projectType: r.projectType || "",
-        budget: (r.budget || "").toString().replace(/[$,]/g, ""),
-        location: r.location || finderCity.trim(),
-        zipCode: r.zipCode || "",
-        timeline: r.timeline || "",
-        description: r.description || "",
-        source: r.source || "AI Lead Finder",
-        sourceUrl: r.sourceUrl || "",
-        _finderId: Date.now() + i,
-        _selected: true,
+        email: r.email || "",
+        website: r.website || "",
+        websiteQuality: r.websiteQuality || "",
+        address: r.address || "",
+        googleReviews: r.googleReviews || { rating: 0, count: 0 },
+        socialMedia: r.socialMedia || { facebook: "none", instagram: "none", linkedin: "none" },
+        indeedHiring: r.indeedHiring || [],
+        estimatedRevenue: r.estimatedRevenue || "",
+        yearEstablished: r.yearEstablished || "",
+        niche: r.niche || prospectNiche,
+        buyingSignals: r.buyingSignals || [],
+        opportunities: r.opportunities || [],
+        sourceUrls: r.sourceUrls || [],
+        classification: null,
       }));
-      setFinderResults(results);
-      setFinderSearchCount(prev => prev + 1);
-      showToast(`Found ${results.length} opportunities`);
+
+      // Auto-classify each prospect
+      results.forEach(p => { p.classification = classifyProspect(p); });
+
+      setProspects(results);
+      showToast(`Found ${results.length} prospects`);
     } catch (err) {
-      console.error("Lead finder error:", err);
-      setFinderError("Search failed — please try again.");
+      console.error("Prospect search error:", err);
+      setProspectError("Search failed — please try again.");
     }
-    setFinderLoading(false);
+    setProspectLoading(false);
   };
 
-  const handleAddFinderLeads = () => {
-    const selected = finderResults.filter(r => r._selected);
-    if (selected.length === 0) { showToast("No leads selected", "error"); return; }
-    const newLeads = selected.map(r => {
-      const { _finderId, _selected, sourceUrl, ...leadData } = r;
-      const desc = sourceUrl ? `${leadData.description}\n\nSource: ${sourceUrl}` : leadData.description;
-      return { ...leadData, description: desc, id: Date.now() + Math.random(), createdAt: Date.now(), followUp: "new", result: qualifyLead(leadData, criteria, ind.typeName) };
-    });
-    setLeads(prev => [...newLeads, ...prev]);
-    showToast(`${selected.length} leads added & qualified`);
-    setFinderResults([]);
-  };
+  // ─── EMAIL DRAFT GENERATION ──────────────────────────────
+  const handleDraftEmail = async (prospect) => {
+    setDraftingEmail(prospect.id);
+    try {
+      const signals = prospect.buyingSignals.slice(0, 2).join(", ");
+      const opportunity = prospect.opportunities[0] || "improve their digital presence";
 
-  const toggleFinderResult = (finderId) => {
-    setFinderResults(prev => prev.map(r => r._finderId === finderId ? { ...r, _selected: !r._selected } : r));
+      const prompt = `Write a short, personalized cold email to ${prospect.businessName}${prospect.ownerName ? ` (owner: ${prospect.ownerName})` : ""}, a ${prospect.niche} business in ${prospect.address.split(",").slice(-2).join(",").trim()}.
+
+Context:
+- Buying signals: ${signals || "growing business"}
+- Opportunity: ${opportunity}
+- You represent Ascend Solutions, a digital agency offering AI automation, web development, and advertising services.
+
+Framework:
+- Hook: Reference something specific about their business
+- Pain point: Connect it to a problem they likely have
+- Offer: One simple thing you can help with (not a full pitch)
+- CTA: Low-friction ask (quick call or reply)
+
+Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson.`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 500,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) {
+        showToast("Failed to generate email", "error");
+        setDraftingEmail(null);
+        return;
+      }
+
+      const emailText = (data.content || []).find(b => b.type === "text")?.text || "";
+      setEmailDrafts(prev => ({ ...prev, [prospect.id]: emailText }));
+      showToast("Email draft generated");
+    } catch (err) {
+      console.error("Email draft error:", err);
+      showToast("Failed to generate email", "error");
+    }
+    setDraftingEmail(null);
   };
 
   const handleClearAll = () => {
@@ -598,7 +697,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
       title: "Reset Everything",
       message: "This will delete all leads, criteria, and settings. Start fresh?",
       onConfirm: async () => {
-        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setFinderTypes(["commercial", "residential", "renovation"]); setFinderResults([]); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
+        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setProspects([]); setEmailDrafts({}); setQueueActions({}); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
         try { localStorage.removeItem(SK.leads); localStorage.removeItem(SK.criteria); localStorage.removeItem(SK.settings); } catch {}
         setConfirmAction(null); showToast("App reset complete");
       },
@@ -741,7 +840,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
                   <label style={{ ...labelStyle, color: "#78716c", textAlign: "left" }}>Your Industry</label>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginTop: 4 }}>
                     {INDUSTRY_LIST.map(i => (
-                      <button key={i.id} onClick={() => { setIndustry(i.id); setCriteria(getDefaultCriteria(i.id)); setFinderTypes([...INDUSTRIES[i.id].defaultTypes]); }}
+                      <button key={i.id} onClick={() => { setIndustry(i.id); setCriteria(getDefaultCriteria(i.id)); }}
                         style={{ padding: "14px 12px", background: industry === i.id ? "#f59e0b" : "#1c1917", border: `2px solid ${industry === i.id ? "#f59e0b" : "#292524"}`, borderRadius: 12, color: industry === i.id ? "#0c0a09" : "#a8a29e", cursor: "pointer", fontSize: 13, fontWeight: industry === i.id ? 700 : 500, fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s", textAlign: "center", lineHeight: 1.3 }}>
                         <span style={{ fontSize: 22, display: "block", marginBottom: 6 }}>{i.icon}</span>
                         {i.label}
@@ -798,7 +897,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
                 <h2 style={{ fontSize: 24, fontWeight: 800, color: "#fafaf9", fontFamily: "'Outfit', sans-serif", marginBottom: 8 }}>You're All Set!</h2>
                 <p style={{ color: "#a8a29e", fontSize: 14, marginBottom: 32, lineHeight: 1.6 }}>{companyName ? `${companyName} is` : "Your qualifier is"} ready to go. Want to load some sample leads to see how it works?</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <button onClick={() => { setSetupComplete(true); setTab("find"); }} style={{ ...btnPrimary, width: "100%", padding: "14px 40px", fontSize: 15 }}>⚡ Find Real Leads →</button>
+                  <button onClick={() => { setSetupComplete(true); setTab("prospects"); }} style={{ ...btnPrimary, width: "100%", padding: "14px 40px", fontSize: 15 }}>⚡ Find Prospects →</button>
                   <button onClick={() => { setSetupComplete(true); setTab("dashboard"); loadDemoData(); }} style={{ ...btnSecondary, width: "100%", padding: "12px 40px", background: "#1c1917" }}>Load Demo Leads & Explore</button>
                   <button onClick={() => { setSetupComplete(true); setTab("add"); }} style={{ ...btnSecondary, width: "100%", padding: "12px 40px", background: "#1c1917" }}>Start Empty — I'll Add My Own</button>
                   <button onClick={() => setSetupStep(1)} style={{ background: "transparent", border: "none", color: "#78716c", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 8 }}>← Back to Criteria</button>
@@ -928,7 +1027,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
         {/* Tabs */}
         <div style={{ borderBottom: `1px solid ${t.border}` }}>
           <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 32px", display: "flex", gap: 2, overflowX: "auto" }} className="tab-bar">
-            {[{ id: "dashboard", label: "Dashboard" }, { id: "leads", label: "Leads", count: leads.length }, { id: "find", label: "⚡ Find Leads" }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
+            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "Joe's Queue" }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)} style={{ padding: "12px 20px", background: tab === tb.id ? t.accent : "transparent", color: tab === tb.id ? "#0c0a09" : t.textMuted, border: "none", borderBottom: tab === tb.id ? `3px solid ${t.accent}` : "3px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: tab === tb.id ? 700 : 500, letterSpacing: "0.02em", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
                 {tb.label}
                 {tb.count !== undefined && <span style={{ background: tab === tb.id ? "#00000033" : t.bgHover, color: tab === tb.id ? "#0c0a09" : t.textDim, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{tb.count}</span>}
@@ -948,7 +1047,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
                   <h3 style={{ fontSize: 18, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No data yet</h3>
                   <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 24 }}>Add some leads to see your qualification analytics</p>
                   <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={() => setTab("find")} style={btnPrimary}>⚡ Find Leads</button>
+                    <button onClick={() => setTab("prospects")} style={btnPrimary}>⚡ Find Prospects</button>
                     <button onClick={() => setTab("add")} style={btnSecondary}>+ Add Manually</button>
                     <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
                   </div>
@@ -1116,7 +1215,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
                   <h3 style={{ fontSize: 18, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No leads yet</h3>
                   <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 24 }}>Find real opportunities or add leads manually</p>
                   <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={() => setTab("find")} style={btnPrimary}>⚡ Find Leads</button>
+                    <button onClick={() => setTab("prospects")} style={btnPrimary}>⚡ Find Prospects</button>
                     <button onClick={() => setTab("add")} style={btnSecondary}>+ Add Manually</button>
                     <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
                   </div>
@@ -1273,151 +1372,299 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
             </div>
           )}
 
-          {/* ════════════ FIND LEADS ════════════ */}
-          {tab === "find" && (
-            <div style={{ animation: "fadeIn 0.3s ease", maxWidth: 860 }}>
+          {/* ════════════ PROSPECTS ════════════ */}
+          {tab === "prospects" && (
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>⚡ AI Lead Finder</h2>
-                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Search the web for real {ind.label.toLowerCase()} opportunities — RFPs, solicitations, bids, and public postings in your target area.</p>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>🎯 Prospect Search</h2>
+                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Multi-pass deep search to find service businesses that need AI, web, and ad services from Ascend Solutions.</p>
               </div>
 
               <div style={cardStyle}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, alignItems: "end", marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                   <div>
-                    <label style={labelStyle}>City or Region</label>
-                    <input style={{ ...inputStyle, fontSize: 16, padding: "12px 16px" }} value={finderCity} onChange={e => setFinderCity(e.target.value)} placeholder="e.g. Austin TX, Bay Area, Denver metro" onKeyDown={e => e.key === "Enter" && !finderLoading && handleFindLeads()} autoFocus />
+                    <label style={labelStyle}>City or Region *</label>
+                    <input style={{ ...inputStyle }} value={prospectCity} onChange={e => setProspectCity(e.target.value)} placeholder="Austin TX" />
                   </div>
-                  <button onClick={handleFindLeads} disabled={finderLoading} style={{ ...btnPrimary, padding: "12px 28px", fontSize: 15, opacity: finderLoading ? 0.6 : 1, cursor: finderLoading ? "wait" : "pointer", whiteSpace: "nowrap", height: "fit-content" }}>
-                    {finderLoading ? "Searching…" : "🔍 Find Leads"}
-                  </button>
+                  <div>
+                    <label style={labelStyle}>Business Niche *</label>
+                    <input style={{ ...inputStyle }} value={prospectNiche} onChange={e => setProspectNiche(e.target.value)} placeholder="HVAC, roofing, plumbing..." />
+                  </div>
                 </div>
 
-                <div>
-                  <label style={labelStyle}>{ind.typeName}s to Search</label>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-                    {PROJECT_TYPES.map(pt => {
-                      const active = finderTypes.includes(pt.id);
-                      return (
-                        <button key={pt.id} onClick={() => setFinderTypes(prev => active ? prev.filter(x => x !== pt.id) : [...prev, pt.id])}
-                          style={{ padding: "6px 14px", background: active ? t.accent : t.bgHover, border: `1px solid ${active ? t.accent : t.borderInput}`, borderRadius: 20, color: active ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 12, fontWeight: active ? 700 : 500, fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s" }}>
-                          {pt.icon} {pt.label}
-                        </button>
-                      );
-                    })}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={labelStyle}>Number of Results</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[5, 10, 15].map(n => (
+                      <button key={n} onClick={() => setProspectCount(n)}
+                        style={{ padding: "8px 20px", background: prospectCount === n ? t.accent : t.bgHover, border: `1px solid ${prospectCount === n ? t.accent : t.borderLight}`, borderRadius: 8, color: prospectCount === n ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: prospectCount === n ? 700 : 500, transition: "all 0.15s" }}>
+                        {n}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Filter by Buying Signals (optional)</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginTop: 8 }}>
+                    {[
+                      { key: "hiringOnIndeed", label: "☑ Hiring on Indeed" },
+                      { key: "badWebsite", label: "☑ No/bad website" },
+                      { key: "lowReviews", label: "☑ Low Google reviews" },
+                      { key: "noSocial", label: "☑ No social media" },
+                      { key: "runningAds", label: "☑ Running ads" },
+                      { key: "recentlyStarted", label: "☑ Recently started" },
+                    ].map(f => (
+                      <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: t.bgHover, borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+                        <input type="checkbox" checked={prospectFilters[f.key]} onChange={e => setProspectFilters(p => ({ ...p, [f.key]: e.target.checked }))} style={{ cursor: "pointer" }} />
+                        <span>{f.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <button onClick={handleProspectSearch} disabled={prospectLoading} style={{ ...btnPrimary, padding: "12px 32px", fontSize: 15, opacity: prospectLoading ? 0.6 : 1, cursor: prospectLoading ? "wait" : "pointer" }}>
+                  {prospectLoading ? "Searching..." : "🔍 Search Prospects"}
+                </button>
               </div>
 
-              {/* Loading indicator */}
-              {finderLoading && (
-                <div style={{ ...cardStyle, textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.3s ease" }}>
+              {prospectLoading && (
+                <div style={{ ...cardStyle, textAlign: "center", padding: "48px 24px" }}>
                   <div style={{ fontSize: 36, marginBottom: 16, animation: "pulse 1.2s infinite" }}>🔍</div>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: t.text, marginBottom: 8 }}>Searching for opportunities…</div>
-                  <div style={{ fontSize: 13, color: t.textDim, maxWidth: 400, margin: "0 auto", lineHeight: 1.5 }}>
-                    Scanning RFPs, solicitations, public postings, and industry opportunities in <strong style={{ color: t.accent }}>{finderCity}</strong>. This usually takes 15–30 seconds.
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Deep search in progress...</div>
+                  <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.5 }}>
+                    Step 1: Finding {prospectNiche} businesses in {prospectCity}<br />
+                    Step 2: Checking Indeed, Google, social media<br />
+                    Step 3: Identifying buying signals
                   </div>
-                  <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 4 }}>
-                    {[0, 1, 2, 3, 4].map(i => (
-                      <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent, animation: `pulse 1s ease ${i * 0.2}s infinite` }} />
+                </div>
+              )}
+
+              {prospectError && (
+                <div style={{ ...cardStyle, background: t.redBg, border: `1px solid ${t.redBorder}` }}>
+                  <span style={{ fontSize: 20 }}>⚠</span> {prospectError}
+                </div>
+              )}
+
+              {prospects.length > 0 && !prospectLoading && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ marginBottom: 16, fontSize: 15, fontWeight: 700 }}>Found {prospects.length} prospects</div>
+                  <div style={{ display: "grid", gap: 16 }}>
+                    {prospects.map(p => (
+                      <div key={p.id} style={{ ...cardStyle, borderLeft: `4px solid ${p.classification.color}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                              <h3 style={{ fontSize: 18, fontWeight: 700 }}>{p.businessName}</h3>
+                              <span style={{ padding: "4px 10px", background: p.classification.color + "22", color: p.classification.color, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
+                                {p.classification.emoji} {p.classification.tier}
+                              </span>
+                              <span style={{ padding: "4px 10px", background: t.bgHover, borderRadius: 12, fontSize: 11, color: t.textMuted }}>{p.niche}</span>
+                            </div>
+                            {p.ownerName && <div style={{ fontSize: 14, color: t.textMuted }}>Owner: {p.ownerName}</div>}
+                          </div>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 12 }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Contact Info</div>
+                            {p.phone && <div style={{ fontSize: 13, marginBottom: 4 }}>☎ {p.phone}</div>}
+                            {p.email && <div style={{ fontSize: 13, marginBottom: 4 }}>✉ {p.email}</div>}
+                            {p.website && <div style={{ fontSize: 13, marginBottom: 4 }}>🌐 {p.website}</div>}
+                            {p.address && <div style={{ fontSize: 13, color: t.textMuted }}>📍 {p.address}</div>}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Business Info</div>
+                            {p.googleReviews.count > 0 && <div style={{ fontSize: 13, marginBottom: 4 }}>⭐ {p.googleReviews.rating} ({p.googleReviews.count} reviews)</div>}
+                            {p.estimatedRevenue && <div style={{ fontSize: 13, marginBottom: 4 }}>💰 {p.estimatedRevenue}</div>}
+                            {p.yearEstablished && <div style={{ fontSize: 13, marginBottom: 4 }}>📅 Est. {p.yearEstablished}</div>}
+                            {p.websiteQuality && <div style={{ fontSize: 13, color: t.textMuted }}>🌐 {p.websiteQuality}</div>}
+                          </div>
+                        </div>
+
+                        {p.socialMedia && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Social Media</div>
+                            <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
+                              <span>FB: {p.socialMedia.facebook === "active" ? "✓" : "✗"}</span>
+                              <span>IG: {p.socialMedia.instagram === "active" ? "✓" : "✗"}</span>
+                              <span>LI: {p.socialMedia.linkedin === "active" ? "✓" : "✗"}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {p.indeedHiring && p.indeedHiring.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Hiring on Indeed</div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {p.indeedHiring.map((job, i) => (
+                                <span key={i} style={{ padding: "4px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11 }}>{job}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {p.buyingSignals && p.buyingSignals.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>🔥 Buying Signals</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {p.buyingSignals.map((sig, i) => (
+                                <div key={i} style={{ padding: "6px 10px", background: t.accent + "11", borderLeft: `3px solid ${t.accent}`, borderRadius: 4, fontSize: 12 }}>{sig}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {p.opportunities && p.opportunities.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>💡 Opportunities</div>
+                            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: t.textMuted }}>
+                              {p.opportunities.map((opp, i) => <li key={i} style={{ marginBottom: 2 }}>{opp}</li>)}
+                            </ul>
+                          </div>
+                        )}
+
+                        <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+                          <button onClick={() => expandedProspect === p.id ? setExpandedProspect(null) : setExpandedProspect(p.id)} style={{ ...btnSecondary, fontSize: 12 }}>
+                            {expandedProspect === p.id ? "Hide Details" : "Show Details"}
+                          </button>
+                          <button onClick={() => handleDraftEmail(p)} disabled={draftingEmail === p.id} style={{ ...btnSecondary, fontSize: 12 }}>
+                            {draftingEmail === p.id ? "Drafting..." : emailDrafts[p.id] ? "Re-draft Email" : "Draft Email"}
+                          </button>
+                        </div>
+
+                        {emailDrafts[p.id] && (
+                          <div style={{ marginTop: 12, padding: 16, background: t.bgAlt, borderRadius: 8, border: `1px solid ${t.borderLight}` }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📧 Email Draft</div>
+                            <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 12, whiteSpace: "pre-wrap" }}>{emailDrafts[p.id]}</div>
+                            <button onClick={() => { navigator.clipboard.writeText(emailDrafts[p.id]); showToast("Email copied to clipboard"); }} style={{ ...btnPrimary, fontSize: 12, padding: "6px 16px" }}>
+                              Copy to Clipboard
+                            </button>
+                          </div>
+                        )}
+
+                        {expandedProspect === p.id && p.sourceUrls && p.sourceUrls.length > 0 && (
+                          <div style={{ marginTop: 12, padding: 12, background: t.bgHover, borderRadius: 6 }}>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Sources</div>
+                            {p.sourceUrls.map((url, i) => (
+                              <div key={i} style={{ fontSize: 11, color: t.accent, marginBottom: 2 }}>{url}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
+            </div>
+          )}
 
-              {/* Error */}
-              {finderError && (
-                <div style={{ ...cardStyle, background: t.redBg, border: `1px solid ${t.redBorder}`, animation: "slideUp 0.3s ease" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 20 }}>⚠</span>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: t.red }}>{finderError}</div>
-                      <div style={{ fontSize: 12, color: t.textDim, marginTop: 4 }}>Try a major metro area or different project types.</div>
-                    </div>
-                  </div>
-                </div>
-              )}
+          {/* ════════════ JOE'S QUEUE ════════════ */}
+          {tab === "queue" && (
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
+              <div style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>📞 Joe's Queue</h2>
+                <p style={{ color: t.textDim, fontSize: 14 }}>Warm prospects ready to contact — sorted by signal strength</p>
+              </div>
 
-              {/* Results */}
-              {finderResults.length > 0 && !finderLoading && (
-                <div style={{ animation: "slideUp 0.3s ease" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
-                    <div>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{finderResults.length} opportunities found</span>
-                      <span style={{ fontSize: 12, color: t.textDim, marginLeft: 8 }}>({finderResults.filter(r => r._selected).length} selected)</span>
+              {(() => {
+                const warmProspects = prospects.filter(p => p.classification.tier === "WARM").sort((a, b) => b.buyingSignals.length - a.buyingSignals.length);
+                const totalContacted = Object.values(queueActions).filter(a => a === "contacted").length;
+                const totalReplied = Object.values(queueActions).filter(a => a === "replied").length;
+
+                if (warmProspects.length === 0) {
+                  return (
+                    <div style={{ textAlign: "center", padding: "80px 20px" }}>
+                      <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📞</div>
+                      <h3 style={{ fontSize: 18, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No warm prospects yet</h3>
+                      <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 24 }}>Run a prospect search to find warm leads</p>
+                      <button onClick={() => setTab("prospects")} style={btnPrimary}>🎯 Search Prospects</button>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => setFinderResults(prev => prev.map(r => ({ ...r, _selected: true })))} style={{ ...btnSecondary, fontSize: 12 }}>Select All</button>
-                      <button onClick={() => setFinderResults(prev => prev.map(r => ({ ...r, _selected: false })))} style={{ ...btnSecondary, fontSize: 12 }}>Deselect All</button>
-                      <button onClick={handleAddFinderLeads} disabled={finderResults.filter(r => r._selected).length === 0}
-                        style={{ ...btnPrimary, fontSize: 13, opacity: finderResults.filter(r => r._selected).length === 0 ? 0.4 : 1 }}>
-                        Add {finderResults.filter(r => r._selected).length} to Pipeline →
+                  );
+                }
+
+                return (
+                  <>
+                    <div style={{ ...cardStyle, display: "flex", gap: 40, marginBottom: 20 }}>
+                      <div><span style={{ fontSize: 28, fontWeight: 700, color: t.green }}>{warmProspects.length}</span><div style={{ fontSize: 11, color: t.textDim }}>WARM LEADS</div></div>
+                      <div><span style={{ fontSize: 28, fontWeight: 700, color: t.accent }}>{totalContacted}</span><div style={{ fontSize: 11, color: t.textDim }}>CONTACTED</div></div>
+                      <div><span style={{ fontSize: 28, fontWeight: 700, color: t.green }}>{totalReplied}</span><div style={{ fontSize: 11, color: t.textDim }}>REPLIED</div></div>
+                    </div>
+
+                    <div style={{ marginBottom: 12, textAlign: "right" }}>
+                      <button onClick={() => {
+                        const csv = ["Business Name,Owner,Phone,Email,Website,Address,Niche,Buying Signals,Opportunities", ...warmProspects.map(p =>
+                          `"${p.businessName}","${p.ownerName}","${p.phone}","${p.email}","${p.website}","${p.address}","${p.niche}","${(p.buyingSignals || []).join("; ")}","${(p.opportunities || []).join("; ")}"`
+                        )].join("\n");
+                        const blob = new Blob([csv], { type: "text/csv" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "joes_queue.csv";
+                        a.click();
+                      }} style={{ ...btnSecondary, fontSize: 12 }}>
+                        ↓ Export CSV
                       </button>
                     </div>
-                  </div>
 
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {finderResults.map((r) => {
-                      const previewResult = qualifyLead(r, criteria, ind.typeName);
-                      return (
-                        <div key={r._finderId} onClick={() => toggleFinderResult(r._finderId)}
-                          style={{ ...cardStyle, marginBottom: 0, cursor: "pointer", borderColor: r._selected ? t.accent : t.border, background: r._selected ? (theme === "dark" ? "#1a1708" : "#fffbeb") : t.cardBg, transition: "all 0.2s", position: "relative" }}>
-                          
-                          {/* Selection checkbox */}
-                          <div style={{ position: "absolute", top: 16, right: 16, width: 22, height: 22, borderRadius: 6, border: `2px solid ${r._selected ? t.accent : t.borderInput}`, background: r._selected ? t.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.15s" }}>
-                            {r._selected && <span style={{ color: "#0c0a09", fontSize: 13, fontWeight: 700 }}>✓</span>}
+                    <div style={{ display: "grid", gap: 16 }}>
+                      {warmProspects.map(p => (
+                        <div key={p.id} style={{ ...cardStyle, borderLeft: `4px solid ${t.green}`, opacity: queueActions[p.id] === "dismissed" ? 0.4 : 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
+                            <div>
+                              <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{p.businessName}</h3>
+                              <div style={{ fontSize: 14, color: t.textMuted }}>{p.ownerName} • {p.phone} • {p.email}</div>
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              {p.buyingSignals.slice(0, 2).map((sig, i) => (
+                                <span key={i} style={{ padding: "4px 8px", background: t.accent + "22", color: t.accent, borderRadius: 8, fontSize: 10, fontWeight: 700 }}>🔥 {i + 1}</span>
+                              ))}
+                            </div>
                           </div>
 
-                          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", paddingRight: 40 }}>
-                            <div style={{ flex: "2 1 280px" }}>
-                              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: t.text }}>{r.name || r.company || "Unknown Project"}</div>
-                              {r.company && r.company !== r.name && <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 6 }}>{r.company}</div>}
-                              {r.description && <div style={{ fontSize: 13, color: t.textDim, lineHeight: 1.5, marginBottom: 8 }}>{r.description}</div>}
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                {r.projectType && <span style={{ padding: "3px 10px", background: t.bgHover, borderRadius: 12, fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "capitalize" }}>{r.projectType.replace(/_/g, " ")}</span>}
-                                {r.location && <span style={{ padding: "3px 10px", background: t.bgHover, borderRadius: 12, fontSize: 11, fontWeight: 600, color: t.textMuted }}>📍 {r.location}</span>}
-                                {r.timeline && <span style={{ padding: "3px 10px", background: t.bgHover, borderRadius: 12, fontSize: 11, fontWeight: 600, color: t.textMuted }}>⏱ {TIMELINE_OPTIONS.find(tl => tl.value === r.timeline)?.label || r.timeline}</span>}
-                              </div>
-                              {r.sourceUrl && <div style={{ marginTop: 8, fontSize: 11, color: t.accent }}>{r.source || "Source"}</div>}
+                          <div style={{ marginBottom: 12, fontSize: 13 }}>
+                            <strong>Top Signals:</strong>
+                            <div style={{ marginTop: 4 }}>
+                              {p.buyingSignals.slice(0, 2).map((sig, i) => (
+                                <div key={i} style={{ padding: "6px 10px", background: t.accent + "11", borderLeft: `3px solid ${t.accent}`, borderRadius: 4, fontSize: 12, marginBottom: 4 }}>{sig}</div>
+                              ))}
                             </div>
-                            <div style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
-                              {r.budget && (
-                                <div>
-                                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: t.textFaint }}>Est. Budget</div>
-                                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: t.accent }}>${parseInt(r.budget).toLocaleString()}</div>
-                                </div>
-                              )}
-                              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                <span style={{ width: 7, height: 7, borderRadius: "50%", background: previewResult.qualified ? t.green : t.red }} />
-                                <span style={{ fontSize: 11, fontWeight: 600, color: previewResult.qualified ? t.green : t.red }}>
-                                  {previewResult.qualified ? "Would Qualify" : "Wouldn't Qualify"} ({previewResult.score}/{previewResult.total})
-                                </span>
-                              </div>
-                              {r.email && <div style={{ fontSize: 12, color: t.textDim }}>✉ {r.email}</div>}
-                              {r.phone && <div style={{ fontSize: 12, color: t.textDim }}>☎ {r.phone}</div>}
+                          </div>
+
+                          {emailDrafts[p.id] && (
+                            <div style={{ marginBottom: 12, padding: 12, background: t.bgAlt, borderRadius: 6, border: `1px solid ${t.borderLight}` }}>
+                              <div style={{ fontSize: 11, color: t.textDim, marginBottom: 6 }}>📧 DRAFT EMAIL</div>
+                              <div style={{ fontSize: 12, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{emailDrafts[p.id]}</div>
                             </div>
+                          )}
+
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {!emailDrafts[p.id] && (
+                              <button onClick={() => handleDraftEmail(p)} disabled={draftingEmail === p.id} style={{ ...btnPrimary, fontSize: 12, padding: "8px 16px" }}>
+                                {draftingEmail === p.id ? "Drafting..." : "Draft Email"}
+                              </button>
+                            )}
+                            {emailDrafts[p.id] && (
+                              <button onClick={() => { navigator.clipboard.writeText(emailDrafts[p.id]); showToast("Copied to clipboard"); }} style={{ ...btnPrimary, fontSize: 12, padding: "8px 16px" }}>
+                                Copy Email
+                              </button>
+                            )}
+                            <button onClick={() => setQueueActions(prev => ({ ...prev, [p.id]: "contacted" }))} disabled={queueActions[p.id] === "contacted"} style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: queueActions[p.id] === "contacted" ? t.accent + "22" : t.bgHover }}>
+                              {queueActions[p.id] === "contacted" ? "✓ Contacted" : "Mark Contacted"}
+                            </button>
+                            <button onClick={() => setQueueActions(prev => ({ ...prev, [p.id]: "replied" }))} disabled={queueActions[p.id] === "replied"} style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: queueActions[p.id] === "replied" ? t.green + "22" : t.bgHover }}>
+                              {queueActions[p.id] === "replied" ? "✓ Replied" : "Mark Replied"}
+                            </button>
+                            <button onClick={() => setQueueActions(prev => ({ ...prev, [p.id]: "dismissed" }))} style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", color: t.textDim }}>
+                              Dismiss
+                            </button>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
-                    <button onClick={handleAddFinderLeads} disabled={finderResults.filter(r => r._selected).length === 0}
-                      style={{ ...btnPrimary, padding: "14px 40px", fontSize: 15, opacity: finderResults.filter(r => r._selected).length === 0 ? 0.4 : 1 }}>
-                      Add {finderResults.filter(r => r._selected).length} Lead{finderResults.filter(r => r._selected).length !== 1 ? "s" : ""} to Pipeline →
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!finderLoading && finderResults.length === 0 && !finderError && finderSearchCount === 0 && (
-                <div style={{ textAlign: "center", padding: "48px 20px", color: t.textDim }}>
-                  <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.2 }}>🌐</div>
-                  <p style={{ fontSize: 15, fontWeight: 500, marginBottom: 8 }}>Enter a city and hit search</p>
-                  <p style={{ fontSize: 13, color: t.textFaint, maxWidth: 400, margin: "0 auto", lineHeight: 1.5 }}>We'll scan public sources for real {ind.label.toLowerCase()} opportunities — RFPs, solicitations, bids, and public postings.</p>
-                </div>
-              )}
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -1476,8 +1723,7 @@ If you can't find a specific field, use empty string. For timeline, use one of: 
                     setIndustry(newInd);
                     const newCriteria = getDefaultCriteria(newInd);
                     setCriteria(prev => ({ ...prev, acceptedProjectTypes: newCriteria.acceptedProjectTypes, minBudget: newCriteria.minBudget, maxBudget: newCriteria.maxBudget }));
-                    setFinderTypes([...INDUSTRIES[newInd].defaultTypes]);
-                    setFinderResults([]);
+                    setProspects([]);
                     setSettingsEdited(true);
                   }}>
                     {INDUSTRY_LIST.map(i => <option key={i.id} value={i.id}>{i.icon} {i.label}</option>)}
