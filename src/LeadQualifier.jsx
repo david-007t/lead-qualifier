@@ -552,7 +552,7 @@ RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation. Each object must ha
 Return ${prospectCount} businesses. Use real data from your search. If you can't find a field, use empty string or empty array.`;
 
     try {
-      const response = await fetch("/api/anthropic", {
+      const response = await fetchWithRetry("/api/anthropic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -662,7 +662,7 @@ Framework:
 
 Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson.`;
 
-      const response = await fetch("/api/anthropic", {
+      const response = await fetchWithRetry("/api/anthropic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -687,6 +687,19 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
       showToast("Failed to generate email", "error");
     }
     setDraftingEmail(null);
+  };
+
+  // ─── SHARED FETCH WITH RETRY ─────────────────────────────
+  const fetchWithRetry = async (url, options, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(url, options);
+        return res;
+      } catch (err) {
+        if (attempt === retries) throw err;
+        await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+      }
+    }
   };
 
   // ─── SALES PLAYBOOK GENERATION ───────────────────────────
@@ -730,7 +743,7 @@ Respond with ONLY this JSON structure, no markdown:
   "revenue": { "monthlyValue": "$X,XXX", "annualValue": "$XX,XXX", "yourCutAnnual": "$X,XXX" }
 }`;
 
-      const response = await fetch("/api/anthropic", {
+      const response = await fetchWithRetry("/api/anthropic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
