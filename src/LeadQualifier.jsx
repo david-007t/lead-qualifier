@@ -1594,18 +1594,26 @@ Respond with ONLY this JSON structure, no markdown:
                                 </div>
                                 <div style={{ flex: "1 1 300px" }}>
                                   <h4 style={{ fontSize: 12, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Qualification Breakdown</h4>
-                                  <div style={{ display: "grid", gap: 8 }}>
-                                    {lead.result.criteria.map((c, i) => (
-                                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: t.bgHover, borderRadius: 6, borderLeft: `3px solid ${c.pass ? t.green : t.red}` }}>
-                                        <span style={{ fontSize: 14, color: c.pass ? t.green : t.red }}>{c.pass ? "✓" : "✕"}</span>
-                                        <div><div style={{ fontSize: 13, fontWeight: 600, color: c.pass ? t.green : t.red }}>{c.name}</div><div style={{ fontSize: 11, color: t.textDim }}>{c.detail}</div></div>
+                                  {lead.result?.criteria?.length > 0 ? (
+                                    <>
+                                      <div style={{ display: "grid", gap: 8 }}>
+                                        {lead.result.criteria.map((c, i) => (
+                                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: t.bgHover, borderRadius: 6, borderLeft: `3px solid ${c.pass ? t.green : t.red}` }}>
+                                            <span style={{ fontSize: 14, color: c.pass ? t.green : t.red }}>{c.pass ? "✓" : "✕"}</span>
+                                            <div><div style={{ fontSize: 13, fontWeight: 600, color: c.pass ? t.green : t.red }}>{c.name}</div><div style={{ fontSize: 11, color: t.textDim }}>{c.detail}</div></div>
+                                          </div>
+                                        ))}
                                       </div>
-                                    ))}
-                                  </div>
-                                  <div style={{ marginTop: 12, padding: "10px 14px", background: lead.result.qualified ? t.greenBg : t.redBg, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600 }}>Final Score</span>
-                                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: lead.result.qualified ? t.green : t.red }}>{lead.result.score}/{lead.result.total}</span>
-                                  </div>
+                                      <div style={{ marginTop: 12, padding: "10px 14px", background: lead.result.qualified ? t.greenBg : t.redBg, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <span style={{ fontSize: 13, fontWeight: 600 }}>Final Score</span>
+                                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: lead.result.qualified ? t.green : t.red }}>{lead.result.score}/{lead.result.total}</span>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div style={{ padding: "12px 16px", background: t.bgHover, borderRadius: 8, fontSize: 13, color: t.textMuted }}>
+                                      No qualification criteria set — configure criteria in Settings to score this lead.
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
