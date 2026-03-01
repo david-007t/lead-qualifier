@@ -501,7 +501,6 @@ export default function LeadQualifier() {
   // ─── PROSPECT SEARCH (Multi-pass deep search) ────────────
   const handleProspectSearch = async () => {
     if (!prospectCity.trim()) { showToast("Enter a city or region", "error"); return; }
-    if (!prospectNiche.trim()) { showToast("Enter a business niche", "error"); return; }
     setProspectLoading(true);
     setProspectError(null);
     setProspects([]);
@@ -514,11 +513,13 @@ export default function LeadQualifier() {
     if (prospectFilters.runningAds) filterList.push("Running ads (Google/Facebook)");
     if (prospectFilters.recentlyStarted) filterList.push("Recently started business");
 
-    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${prospectNiche} businesses in ${prospectCity.trim()} that need their services.
+    const nicheLabel = prospectNiche.trim() || "local";
+    const searchQuery = prospectNiche.trim() ? `${prospectNiche} companies in ${prospectCity.trim()}` : `small businesses in ${prospectCity.trim()}`;
+    const prompt = `You are helping Ascend Solutions (a digital agency offering AI automation, web development, and advertising services) find ${nicheLabel} businesses in ${prospectCity.trim()} that need their services.
 
 MULTI-STEP SEARCH PROCESS:
 
-Step 1: Search for "${prospectNiche} companies in ${prospectCity.trim()}" — find ${prospectCount} real businesses with names, addresses, phone numbers, websites.
+Step 1: Search for "${searchQuery}" — find ${prospectCount} real businesses with names, addresses, phone numbers, websites.
 
 Step 2: For each business found, search for:
 - Their Indeed job postings (hiring = growth signal)
@@ -1570,7 +1571,7 @@ Respond with ONLY this JSON structure, no markdown:
                     <input style={{ ...inputStyle }} value={prospectCity} onChange={e => setProspectCity(e.target.value)} placeholder="Austin TX" />
                   </div>
                   <div>
-                    <label style={labelStyle}>Business Niche *</label>
+                    <label style={labelStyle}>Business Niche (optional)</label>
                     <input style={{ ...inputStyle }} value={prospectNiche} onChange={e => setProspectNiche(e.target.value)} placeholder="HVAC, roofing, plumbing..." />
                   </div>
                 </div>
@@ -1616,7 +1617,7 @@ Respond with ONLY this JSON structure, no markdown:
                   <div style={{ fontSize: 36, marginBottom: 16, animation: "pulse 1.2s infinite" }}>🔍</div>
                   <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Deep search in progress...</div>
                   <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.5 }}>
-                    Step 1: Finding {prospectNiche} businesses in {prospectCity}<br />
+                    Step 1: Finding {prospectNiche.trim() || "local"} businesses in {prospectCity}<br />
                     Step 2: Checking Indeed, Google, social media<br />
                     Step 3: Identifying buying signals
                   </div>
