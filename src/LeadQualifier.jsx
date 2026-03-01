@@ -530,45 +530,58 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
         }),
       });
       const data = await response.json();
-      if (data.error) { setFinderError(data.error.message || "API error. Please try again."); setFinderLoading(false); return; }
-      
-      // Extract all text from response blocks (web search responses have many block types)
+      if (data.error) {
+        const msg = data.error.message || "API error";
+        console.error("[ProspectSearch] API error:", data.error);
+        setProspectError(`API error: ${msg}. Check that your Anthropic API key is set correctly in Vercel.`);
+        setProspectLoading(false);
+        return;
+      }
+
+      // Extract all text from response blocks
       const textParts = [];
       (data.content || []).forEach(block => {
         if (block.type === "text" && block.text) textParts.push(block.text);
       });
       const fullText = textParts.join("\n");
-      
+      console.log("[ProspectSearch] Raw response length:", fullText.length);
+      console.log("[ProspectSearch] Raw response preview:", fullText.slice(0, 500));
+
       // Try multiple strategies to extract JSON array
       let parsed = null;
-      
+      let parseError = "";
+
       // Strategy 1: Find JSON array in code fences
       const fenceMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
       if (fenceMatch) {
-        try { parsed = JSON.parse(fenceMatch[1]); } catch {}
+        try { parsed = JSON.parse(fenceMatch[1]); } catch (e) { parseError = `Fence parse failed: ${e.message}`; }
       }
-      
-      // Strategy 2: Find the last JSON array in the text (most likely to be the final answer)
-      if (!parsed) {
-        const allArrays = [...fullText.matchAll(/\[[\s\S]*?\](?=\s*$|\s*```|\s*\n\n)/g)];
-        for (let i = allArrays.length - 1; i >= 0; i--) {
-          try { const candidate = JSON.parse(allArrays[i][0]); if (Array.isArray(candidate) && candidate.length > 0 && candidate[0].name !== undefined) { parsed = candidate; break; } } catch {}
-        }
-      }
-      
-      // Strategy 3: Greedy — find anything that looks like a JSON array with objects
+
+      // Strategy 2: Greedy — find anything that looks like a JSON array with objects
       if (!parsed) {
         const greedyMatch = fullText.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (greedyMatch) {
           try { parsed = JSON.parse(greedyMatch[0]); } catch {
-            // Try fixing common issues: trailing commas, etc
-            try { parsed = JSON.parse(greedyMatch[0].replace(/,\s*(?=[}\]])/g, '')); } catch {}
+            try { parsed = JSON.parse(greedyMatch[0].replace(/,\s*(?=[}\]])/g, '')); } catch (e) { parseError = `Greedy parse failed: ${e.message}`; }
           }
         }
       }
-      
+
+      // Strategy 3: Find last [ ... ] block in text
+      if (!parsed) {
+        const lastBracket = fullText.lastIndexOf("[");
+        if (lastBracket !== -1) {
+          const slice = fullText.slice(lastBracket);
+          try { const candidate = JSON.parse(slice); if (Array.isArray(candidate) && candidate.length > 0) parsed = candidate; } catch (e) { parseError = `Last-bracket parse failed: ${e.message}`; }
+        }
+      }
+
       if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-        setProspectError("No businesses found. Try a larger city or different niche.");
+        console.error("[ProspectSearch] Parse failed. Error:", parseError, "| Full text:", fullText);
+        const suggestion = prospectNiche.trim()
+          ? `Try reducing results to 5, or broaden the niche (e.g. "contractors" instead of a specific trade).`
+          : `Try adding a specific niche (e.g. "HVAC" or "roofing") to get more targeted results.`;
+        setProspectError(`No results parsed from AI response. ${suggestion}\n\nDebug: ${parseError || "Empty or non-array response"}`);
         setProspectLoading(false);
         return;
       }
@@ -600,8 +613,9 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
       setProspects(results);
       showToast(`Found ${results.length} prospects`);
     } catch (err) {
-      console.error("Prospect search error:", err);
-      setProspectError("Search failed — please try again.");
+      console.error("[ProspectSearch] Unexpected error:", err);
+      const isNetwork = err.message?.includes("fetch") || err.message?.includes("network");
+      setProspectError(`Search failed: ${err.message || "Unknown error"}. ${isNetwork ? "Check your internet connection and try again." : "Try reducing the result count or adding a specific niche."}`);
     }
     setProspectLoading(false);
   };
