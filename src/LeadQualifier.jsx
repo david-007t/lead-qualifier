@@ -195,11 +195,10 @@ function getDefaultCriteria(industryId) {
   return {
     minBudget: ind.defaultBudget[0],
     maxBudget: ind.defaultBudget[1],
-    acceptedProjectTypes: [...ind.defaultTypes],
     serviceAreaZips: "",
     maxTimelineMonths: 24,
     minTimelineMonths: 0,
-    requiredFields: ["name", "budget", "projectType"],
+    requiredFields: ["name", "budget"],
   };
 }
 
@@ -213,11 +212,6 @@ function qualifyLead(lead, criteria, typeName = "Category") {
     results.total++; if (pass) results.score++;
   } else if (lead.budget) {
     results.criteria.push({ name: "Budget Range", pass: false, detail: "Invalid budget value" }); results.total++;
-  }
-  if (lead.projectType) {
-    const pass = criteria.acceptedProjectTypes.includes(lead.projectType.toLowerCase().replace(/\s+/g, "_"));
-    results.criteria.push({ name: typeName, pass, detail: pass ? `${lead.projectType} accepted` : `${lead.projectType} not accepted` });
-    results.total++; if (pass) results.score++;
   }
   if (criteria.serviceAreaZips && criteria.serviceAreaZips.trim()) {
     const allowed = criteria.serviceAreaZips.split(",").map(z => z.trim());
@@ -1037,15 +1031,6 @@ Respond with ONLY this JSON structure, no markdown:
                   </div>
                 </div>
                 <div style={cardStyle}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#fafaf9" }}>{ind.icon} Accepted {ind.typeName}s</h3>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {PROJECT_TYPES.map(pt => {
-                      const active = criteria.acceptedProjectTypes.includes(pt.id);
-                      return (<button key={pt.id} onClick={() => setCriteria(p => ({ ...p, acceptedProjectTypes: active ? p.acceptedProjectTypes.filter(x => x !== pt.id) : [...p.acceptedProjectTypes, pt.id] }))} style={{ padding: "8px 16px", background: active ? "#f59e0b" : "#1c1917", border: `1px solid ${active ? "#f59e0b" : "#3a3631"}`, borderRadius: 20, color: active ? "#0c0a09" : "#a8a29e", cursor: "pointer", fontSize: 13, fontWeight: active ? 700 : 500, fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s" }}>{pt.icon} {pt.label}</button>);
-                    })}
-                  </div>
-                </div>
-                <div style={cardStyle}>
                   <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, color: "#fafaf9" }}>📍 Service Area (Optional)</h3>
                   <p style={{ fontSize: 12, color: "#57534e", marginBottom: 12 }}>ZIP code prefixes, comma-separated. Leave empty to skip.</p>
                   <input style={inputStyle} value={criteria.serviceAreaZips} onChange={e => setCriteria(p => ({ ...p, serviceAreaZips: e.target.value }))} placeholder="e.g. 941, 940, 950" />
@@ -1200,7 +1185,7 @@ Respond with ONLY this JSON structure, no markdown:
         {/* Tabs */}
         <div style={{ borderBottom: `1px solid ${t.border}` }}>
           <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 32px", display: "flex", gap: 2, overflowX: "auto" }} className="tab-bar">
-            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "Joe's Queue" }, { id: "outreach", label: "Outreach", count: outreachProspects.length || undefined }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
+            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "My Queue" }, { id: "outreach", label: "Cold Outreach", count: outreachProspects.length || undefined }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)} style={{ padding: "12px 20px", background: tab === tb.id ? t.accent : "transparent", color: tab === tb.id ? "#0c0a09" : t.textMuted, border: "none", borderBottom: tab === tb.id ? `3px solid ${t.accent}` : "3px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: tab === tb.id ? 700 : 500, letterSpacing: "0.02em", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
                 {tb.label}
                 {tb.count !== undefined && <span style={{ background: tab === tb.id ? "#00000033" : t.bgHover, color: tab === tb.id ? "#0c0a09" : t.textDim, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{tb.count}</span>}
@@ -1841,12 +1826,12 @@ Respond with ONLY this JSON structure, no markdown:
             </div>
           )}
 
-          {/* ════════════ JOE'S QUEUE ════════════ */}
+          {/* ════════════ MY QUEUE ════════════ */}
           {tab === "queue" && (
             <div style={{ animation: "fadeIn 0.3s ease" }}>
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>📞 Joe's Queue</h2>
-                <p style={{ color: t.textDim, fontSize: 14 }}>Warm prospects ready to contact — sorted by signal strength</p>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>🔥 My Queue</h2>
+                <p style={{ color: t.textDim, fontSize: 14 }}>Warm prospects with direct contact — ready to reach out now. Add to Leads once they're engaged.</p>
               </div>
 
               {(() => {
@@ -1882,7 +1867,7 @@ Respond with ONLY this JSON structure, no markdown:
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = "joes_queue.csv";
+                        a.download = "my_queue.csv";
                         a.click();
                       }} style={{ ...btnSecondary, fontSize: 12 }}>
                         ↓ Export CSV
@@ -1972,16 +1957,6 @@ Respond with ONLY this JSON structure, no markdown:
               </div>
 
               <div style={cardStyle}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: t.text }}><span style={{ color: t.accent }}>◆</span> Accepted {ind.typeName}s</h3>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {PROJECT_TYPES.map(pt => {
-                    const active = criteria.acceptedProjectTypes.includes(pt.id);
-                    return (<button key={pt.id} onClick={() => { setCriteria(p => ({ ...p, acceptedProjectTypes: active ? p.acceptedProjectTypes.filter(x => x !== pt.id) : [...p.acceptedProjectTypes, pt.id] })); setSettingsEdited(true); }} style={{ padding: "8px 16px", background: active ? t.accent : t.bgHover, border: `1px solid ${active ? t.accent : t.borderInput}`, borderRadius: 20, color: active ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: active ? 700 : 500, fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s" }}>{pt.icon} {pt.label}</button>);
-                  })}
-                </div>
-              </div>
-
-              <div style={cardStyle}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, color: t.text }}><span style={{ color: t.accent }}>◎</span> Service Area</h3>
                 <p style={{ fontSize: 12, color: t.textFaint, marginBottom: 12 }}>ZIP code prefixes, comma-separated. Leave empty to skip.</p>
                 <input style={inputStyle} value={criteria.serviceAreaZips} onChange={e => { setCriteria(p => ({ ...p, serviceAreaZips: e.target.value })); setSettingsEdited(true); }} placeholder="e.g. 902, 900, 100" />
@@ -2004,7 +1979,7 @@ Respond with ONLY this JSON structure, no markdown:
                     const newInd = e.target.value;
                     setIndustry(newInd);
                     const newCriteria = getDefaultCriteria(newInd);
-                    setCriteria(prev => ({ ...prev, acceptedProjectTypes: newCriteria.acceptedProjectTypes, minBudget: newCriteria.minBudget, maxBudget: newCriteria.maxBudget }));
+                    setCriteria(prev => ({ ...prev, minBudget: newCriteria.minBudget, maxBudget: newCriteria.maxBudget }));
                     setProspects([]);
                     setSettingsEdited(true);
                   }}>
