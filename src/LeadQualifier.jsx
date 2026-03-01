@@ -322,7 +322,7 @@ export default function LeadQualifier() {
   const [outreachDrafts, setOutreachDrafts] = useState({});   // { id: { to, subject, body } }
   const [outreachStatuses, setOutreachStatuses] = useState({}); // { id: 'draft'|'sending'|'sent'|'replied' }
   const [sendingEmail, setSendingEmail] = useState(null);
-  const [emailConfig, setEmailConfig] = useState({ host: "", port: 587, user: "", pass: "", fromName: "" });
+  const [emailConfig, setEmailConfig] = useState({ host: "", port: 587, user: "", pass: "", fromName: "", senderTitle: "", senderPhone: "" });
   const [addedToLeads, setAddedToLeads] = useState(new Set());
 
   const fileRef = useRef();
@@ -464,6 +464,14 @@ export default function LeadQualifier() {
     if (prospectFilters.runningAds) filterList.push("Running ads (Google/Facebook)");
     if (prospectFilters.recentlyStarted) filterList.push("Recently started business");
 
+    const hardRequirements = [];
+    if (prospectFilters.hiringOnIndeed) hardRequirements.push("MUST be actively hiring on Indeed right now — search Indeed.com for their open jobs and only include businesses with at least one active listing. Populate indeedHiring with the real job title, summary, and apply URL.");
+    if (prospectFilters.badWebsite) hardRequirements.push("MUST have a poor quality website (outdated, broken, no booking/lead form) OR no website at all. Set websiteStatus to 'bad' or 'none'.");
+    if (prospectFilters.lowReviews) hardRequirements.push("MUST have low Google reviews — fewer than 20 reviews OR a rating below 4.0 stars.");
+    if (prospectFilters.noSocial) hardRequirements.push("MUST have little or no social media presence — no active Facebook, Instagram, or TikTok accounts.");
+    if (prospectFilters.runningAds) hardRequirements.push("MUST be currently running paid ads on Google or Facebook.");
+    if (prospectFilters.recentlyStarted) hardRequirements.push("MUST be a recently started business — established within the last 3 years.");
+
     const nicheLabel = prospectNiche.trim() || "local";
     const searchQuery = prospectNiche.trim() ? `${prospectNiche} companies in ${prospectCity.trim()}` : `small businesses in ${prospectCity.trim()}`;
 
@@ -485,10 +493,10 @@ export default function LeadQualifier() {
 ${nicheInstruction}
 
 TASK: Search for "${searchQuery}" and find ${prospectCount} real local businesses. Then for each, gather additional info.
-
+${hardRequirements.length > 0 ? `\nHARD REQUIREMENTS — every business returned MUST satisfy ALL of the following:\n${hardRequirements.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nDo NOT include any business that does not meet these requirements. If you cannot find enough qualifying businesses, return fewer results rather than including ones that don't qualify.\n` : ""}
 Search steps:
 1. Find ${prospectCount} real businesses with names, addresses, phone numbers, websites
-2. For each business check: Indeed job postings, Google reviews, Facebook/Instagram presence, website quality, any ad activity
+2. For each business check: Indeed job postings, Google reviews, Facebook/Instagram/LinkedIn presence, website quality, any ad activity
 3. Identify buying signals${filterList.length > 0 ? `: ${filterList.join(", ")}` : ""}
 
 CRITICAL: Your entire response must be ONLY a valid JSON array starting with [ and ending with ]. No text before or after. No markdown. No explanation. Just the raw JSON array.
@@ -645,18 +653,28 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
       const signals = prospect.buyingSignals.slice(0, 2).join(", ");
       const opportunity = prospect.opportunities[0] || "improve their digital presence";
 
-      const prompt = `Write a short, personalized cold email to ${prospect.businessName}${prospect.ownerName ? ` (owner: ${prospect.ownerName})` : ""}, a ${prospect.niche} business in ${prospect.address.split(",").slice(-2).join(",").trim()}.
+      const myCompany = companyName || "my agency";
+      const myName = emailConfig.fromName || "";
+      const myTitle = emailConfig.senderTitle || "";
+      const myPhone = emailConfig.senderPhone || "";
+      const myEmail = emailConfig.user || "";
+      const signature = [myName, myTitle, myCompany, myPhone, myEmail].filter(Boolean).join("\n");
+
+      const prompt = `Write a short, personalized cold email to ${prospect.businessName}${prospect.ownerName ? ` (owner: ${prospect.ownerName})` : ""}, a ${prospect.niche} business in ${prospect.address ? prospect.address.split(",").slice(-2).join(",").trim() : "their area"}.
 
 Context:
 - Buying signals: ${signals || "growing business"}
 - Opportunity: ${opportunity}
-- You represent Ascend Solutions, a digital agency offering AI automation, web development, and advertising services.
+- You are ${myName || "the sender"} from ${myCompany}, a digital agency offering AI automation, web development, and advertising services.
 
 Framework:
 - Hook: Reference something specific about their business
 - Pain point: Connect it to a problem they likely have
 - Offer: One simple thing you can help with (not a full pitch)
 - CTA: Low-friction ask (quick call or reply)
+
+Sign off with:
+${signature || myCompany}
 
 Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson.`;
 
@@ -2189,15 +2207,31 @@ Respond with ONLY this JSON structure, no markdown:
 
               {/* Email Config */}
               <div style={{ ...cardStyle, marginTop: 8 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: t.text }}>📧 Email (for Outreach)</h3>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: t.text }}>📧 Email & Sender Info</h3>
                 <p style={{ fontSize: 12, color: t.textDim, marginBottom: 16, lineHeight: 1.5 }}>
-                  For Gmail, use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: t.accent }}>App Password</a> (not your real password). SMTP host is auto-detected from your email address.
+                  These details are used in email drafts and outreach. For Gmail, use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: t.accent }}>App Password</a>.
                 </p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <label style={labelStyle}>Your Name (shown in From field)</label>
-                    <input style={inputStyle} value={emailConfig.fromName} onChange={e => setEmailConfig(p => ({ ...p, fromName: e.target.value }))} placeholder="Joe Smith" />
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Sender Variables (used in email drafts)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20, paddingBottom: 20, borderBottom: `1px solid ${t.border}` }}>
+                  <div>
+                    <label style={labelStyle}>Your Name</label>
+                    <input style={inputStyle} value={emailConfig.fromName} onChange={e => setEmailConfig(p => ({ ...p, fromName: e.target.value }))} placeholder="John Smith" />
                   </div>
+                  <div>
+                    <label style={labelStyle}>Your Title / Role</label>
+                    <input style={inputStyle} value={emailConfig.senderTitle} onChange={e => setEmailConfig(p => ({ ...p, senderTitle: e.target.value }))} placeholder="Founder, Sales Director..." />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Your Phone</label>
+                    <input style={inputStyle} value={emailConfig.senderPhone} onChange={e => setEmailConfig(p => ({ ...p, senderPhone: e.target.value }))} placeholder="(555) 000-0000" />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Company Name</label>
+                    <input style={inputStyle} value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Sankotech Solutions" />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>SMTP Settings (for sending)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <label style={labelStyle}>Email Address</label>
                     <input style={inputStyle} type="email" value={emailConfig.user} onChange={e => {
