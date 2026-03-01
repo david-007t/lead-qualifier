@@ -353,6 +353,11 @@ export default function LeadQualifier() {
   const [draftingEmail, setDraftingEmail] = useState(null);
   const [emailDrafts, setEmailDrafts] = useState({});
 
+  // Sales Playbook state
+  const [playbookData, setPlaybookData] = useState({});
+  const [generatingPlaybook, setGeneratingPlaybook] = useState(null);
+  const [openPlaybook, setOpenPlaybook] = useState(null);
+
   // Joe's Queue state
   const [queueActions, setQueueActions] = useState({});
 
@@ -682,6 +687,82 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
       showToast("Failed to generate email", "error");
     }
     setDraftingEmail(null);
+  };
+
+  // ─── SALES PLAYBOOK GENERATION ───────────────────────────
+  const handleGeneratePlaybook = async (prospect) => {
+    // Toggle off if already open and cached
+    if (playbookData[prospect.id]) {
+      setOpenPlaybook(prev => prev === prospect.id ? null : prospect.id);
+      return;
+    }
+    setGeneratingPlaybook(prospect.id);
+    setOpenPlaybook(prospect.id);
+    try {
+      const prompt = `Analyze this business profile and create a detailed sales playbook for Ascend Solutions:
+
+BUSINESS PROFILE:
+- Business Name: ${prospect.businessName}
+- Owner: ${prospect.ownerName || "Unknown"}
+- Niche: ${prospect.niche}
+- Location: ${prospect.address}
+- Revenue: ${prospect.estimatedRevenue || "Unknown"}
+- Year Established: ${prospect.yearEstablished || "Unknown"}
+- Website: ${prospect.website || "None"} (Quality: ${prospect.websiteQuality || "Unknown"})
+- Google Reviews: ${prospect.googleReviews?.rating || 0} stars, ${prospect.googleReviews?.count || 0} reviews
+- Social Media: Facebook: ${prospect.socialMedia?.facebook || "none"}, Instagram: ${prospect.socialMedia?.instagram || "none"}, LinkedIn: ${prospect.socialMedia?.linkedin || "none"}
+- Indeed Hiring: ${(prospect.indeedHiring || []).join(", ") || "None"}
+- Buying Signals: ${(prospect.buyingSignals || []).join("; ") || "None identified"}
+- Opportunities: ${(prospect.opportunities || []).join("; ") || "None identified"}
+
+Respond with ONLY this JSON structure, no markdown:
+{
+  "diagnosis": [
+    { "priority": "URGENT", "problem": "Problem title", "costingThem": "Why it costs them money RIGHT NOW", "signal": "Cite specific data from their profile" },
+    { "priority": "HIGH", "problem": "Second problem", "costingThem": "Cost explanation", "signal": "Specific signal" },
+    { "priority": "MEDIUM", "problem": "Third problem", "costingThem": "Cost explanation", "signal": "Specific signal" }
+  ],
+  "play": {
+    "step1": { "title": "THE STARTER", "offer": "What to offer first", "whySolvesIt": "Why this solves their most immediate problem", "price": "$X,XXX", "whyYes": "Why they'd say yes" },
+    "step2": { "title": "THE UPSELL", "offer": "What to offer next", "howStarterCreatesNeed": "How the starter creates the need for this", "price": "$XXX/month", "pitchAngle": "Reference their specific data" },
+    "step3": { "title": "THE SCALE", "offer": "Full service package", "monthlyRetainer": "$X,XXX/month", "roiStory": "What ROI looks like for them" }
+  },
+  "revenue": { "monthlyValue": "$X,XXX", "annualValue": "$XX,XXX", "yourCutAnnual": "$X,XXX" }
+}`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 2000,
+          system: `You are a sales strategist for a digital agency called Ascend Solutions that helps service businesses grow. Ascend offers: website builds and rebuilds ($1,000-3,000), brand kits and social media templates ($500-1,000), Google and Facebook ad management ($800-1,500/month + ad spend), AI automation and lead capture systems ($500-1,500 setup + $200-400/month), social media management ($300-500/month), CRM and follow-up automation ($500-700 setup + $200-300/month), review management and reputation building ($200-300/month). Your job is to analyze a business profile and create a sales playbook that starts small (solve one problem to earn trust), then expands services as you prove value. Always lead with the most urgent pain point — the thing that's actively costing them money. Base your pricing estimates on the business's size, estimated revenue, and industry. Be specific — reference actual data from their profile. Respond with ONLY valid JSON. No markdown, no explanation.`,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) { showToast("Failed to generate playbook", "error"); setGeneratingPlaybook(null); return; }
+
+      const textContent = (data.content || []).find(b => b.type === "text")?.text || "";
+      let playbook = null;
+      try {
+        const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) playbook = JSON.parse(jsonMatch[0]);
+      } catch (e) { console.error("Playbook parse error:", e); }
+
+      if (playbook) {
+        setPlaybookData(prev => ({ ...prev, [prospect.id]: playbook }));
+      } else {
+        showToast("Failed to parse playbook response", "error");
+        setOpenPlaybook(null);
+      }
+    } catch (err) {
+      console.error("Playbook error:", err);
+      showToast("Failed to generate playbook", "error");
+      setOpenPlaybook(null);
+    }
+    setGeneratingPlaybook(null);
   };
 
   const handleClearAll = () => {
@@ -1524,12 +1605,18 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
                           </div>
                         )}
 
-                        <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+                        <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
                           <button onClick={() => expandedProspect === p.id ? setExpandedProspect(null) : setExpandedProspect(p.id)} style={{ ...btnSecondary, fontSize: 12 }}>
                             {expandedProspect === p.id ? "Hide Details" : "Show Details"}
                           </button>
                           <button onClick={() => handleDraftEmail(p)} disabled={draftingEmail === p.id} style={{ ...btnSecondary, fontSize: 12 }}>
                             {draftingEmail === p.id ? "Drafting..." : emailDrafts[p.id] ? "Re-draft Email" : "Draft Email"}
+                          </button>
+                          <button
+                            onClick={() => handleGeneratePlaybook(p)}
+                            disabled={generatingPlaybook === p.id}
+                            style={{ ...btnSecondary, fontSize: 12, borderColor: openPlaybook === p.id ? t.accent : t.borderLight, color: openPlaybook === p.id ? t.accent : t.textMuted, background: openPlaybook === p.id ? t.accent + "11" : t.bgHover, opacity: generatingPlaybook === p.id ? 0.6 : 1 }}>
+                            {generatingPlaybook === p.id ? "⏳ Building Playbook..." : openPlaybook === p.id && playbookData[p.id] ? "📋 Hide Playbook" : "📋 Sales Playbook"}
                           </button>
                         </div>
 
@@ -1549,6 +1636,104 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
                             {p.sourceUrls.map((url, i) => (
                               <div key={i} style={{ fontSize: 11, color: t.accent, marginBottom: 2 }}>{url}</div>
                             ))}
+                          </div>
+                        )}
+
+                        {/* ── SALES PLAYBOOK ── */}
+                        {openPlaybook === p.id && (
+                          <div style={{ marginTop: 16, animation: "slideUp 0.3s ease" }}>
+                            {generatingPlaybook === p.id ? (
+                              <div style={{ padding: "32px 24px", textAlign: "center", background: t.bgAlt, borderRadius: 10, border: `1px solid ${t.borderLight}` }}>
+                                <div style={{ fontSize: 32, marginBottom: 12, animation: "pulse 1.2s infinite" }}>📋</div>
+                                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Building Sales Playbook…</div>
+                                <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.6 }}>Diagnosing pain points · Sequencing the play · Projecting revenue</div>
+                              </div>
+                            ) : playbookData[p.id] ? (
+                              <div style={{ background: t.bgAlt, border: `1px solid ${t.borderLight}`, borderRadius: 10, overflow: "hidden" }}>
+                                {/* Playbook Header */}
+                                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, background: t.bgHover }}>
+                                  <span style={{ fontSize: 18 }}>📋</span>
+                                  <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Sales Playbook</span>
+                                  <span style={{ fontSize: 11, color: t.textMuted, marginLeft: "auto" }}>Ascend Solutions × {p.businessName}</span>
+                                </div>
+
+                                {/* DIAGNOSIS */}
+                                <div style={{ padding: "20px" }}>
+                                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.textDim, textTransform: "uppercase", marginBottom: 12 }}>🔍 Diagnosis — Prioritized Pain Points</div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    {(playbookData[p.id].diagnosis || []).map((item, i) => {
+                                      const priorityColors = { URGENT: "#ef4444", HIGH: "#f97316", MEDIUM: "#f59e0b", LOW: "#6b7280" };
+                                      const color = priorityColors[item.priority] || priorityColors.LOW;
+                                      return (
+                                        <div key={i} style={{ borderLeft: `4px solid ${color}`, padding: "12px 16px", background: color + "0e", borderRadius: "0 8px 8px 0" }}>
+                                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                            <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", background: color + "25", color, borderRadius: 4, letterSpacing: "0.08em", flexShrink: 0 }}>{item.priority}</span>
+                                            <span style={{ fontSize: 14, fontWeight: 700 }}>{item.problem}</span>
+                                          </div>
+                                          <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>💸 {item.costingThem}</div>
+                                          <div style={{ fontSize: 11, color: t.textDim, fontStyle: "italic" }}>📌 {item.signal}</div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* RECOMMENDED PLAY */}
+                                <div style={{ padding: "0 20px 20px" }}>
+                                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.textDim, textTransform: "uppercase", marginBottom: 12 }}>🎯 Recommended Play</div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                    {[
+                                      { key: "step1", icon: "🚀", color: "#34d399" },
+                                      { key: "step2", icon: "📈", color: "#f59e0b" },
+                                      { key: "step3", icon: "⚡", color: "#a78bfa" },
+                                    ].map(({ key, icon, color }) => {
+                                      const step = playbookData[p.id]?.play?.[key];
+                                      if (!step) return null;
+                                      return (
+                                        <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}33`, overflow: "hidden" }}>
+                                          <div style={{ padding: "10px 16px", borderLeft: `4px solid ${color}`, background: color + "15", display: "flex", alignItems: "center", gap: 10 }}>
+                                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color }}>{icon}</span>
+                                            <span style={{ fontSize: 12, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{step.title}</span>
+                                            {(step.price || step.monthlyRetainer) && (
+                                              <span style={{ marginLeft: "auto", padding: "3px 10px", background: color + "25", color, borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+                                                {step.price || step.monthlyRetainer}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div style={{ padding: "12px 16px", display: "grid", gap: 8, background: t.bgHover }}>
+                                            {step.offer && <div style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{step.offer}</div>}
+                                            {step.whySolvesIt && <div style={{ fontSize: 12, color: t.textMuted }}>✓ {step.whySolvesIt}</div>}
+                                            {step.howStarterCreatesNeed && <div style={{ fontSize: 12, color: t.textMuted }}>🔗 {step.howStarterCreatesNeed}</div>}
+                                            {step.roiStory && <div style={{ fontSize: 12, color: t.textMuted }}>📈 {step.roiStory}</div>}
+                                            {step.pitchAngle && <div style={{ fontSize: 12, color: t.textDim, fontStyle: "italic" }}>💬 "{step.pitchAngle}"</div>}
+                                            {step.whyYes && <div style={{ fontSize: 12, color: t.textMuted }}>👍 {step.whyYes}</div>}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* REVENUE PROJECTION */}
+                                {playbookData[p.id].revenue && (
+                                  <div style={{ margin: "0 20px 20px", padding: "18px 20px", background: `linear-gradient(135deg, ${t.accent}15 0%, ${t.accent}06 100%)`, border: `1px solid ${t.accent}44`, borderRadius: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.accent, textTransform: "uppercase", marginBottom: 14 }}>📊 Revenue Projection</div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                                      {[
+                                        { label: "Monthly Value", val: playbookData[p.id].revenue.monthlyValue, color: t.text },
+                                        { label: "Annual Value", val: playbookData[p.id].revenue.annualValue, color: t.accent },
+                                        { label: "Your Cut / Year", val: playbookData[p.id].revenue.yourCutAnnual, color: "#34d399" },
+                                      ].map(({ label, val, color }) => (
+                                        <div key={label} style={{ textAlign: "center" }}>
+                                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 700, color }}>{val || "—"}</div>
+                                          <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 4 }}>{label}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
