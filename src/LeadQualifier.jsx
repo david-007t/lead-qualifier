@@ -1644,7 +1644,17 @@ Respond with ONLY this JSON structure, no markdown:
                                 <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
                                   {lead.googleReviews?.count > 0 && <div style={{ fontSize: 13 }}>⭐ {lead.googleReviews.rating} ({lead.googleReviews.count} reviews)</div>}
                                   {lead.socialMedia && <div style={{ fontSize: 12, color: t.textMuted }}>FB: {lead.socialMedia.facebook === "active" ? "✓" : "✗"} · IG: {lead.socialMedia.instagram === "active" ? "✓" : "✗"} · LI: {lead.socialMedia.linkedin === "active" ? "✓" : "✗"}</div>}
-                                  {lead.indeedHiring?.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{lead.indeedHiring.map((job, i) => <span key={i} style={{ padding: "3px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11 }}>{job}</span>)}</div>}
+                                  {lead.indeedHiring?.length > 0 && (
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                      {lead.indeedHiring.map((job, i) => {
+                                        const title = typeof job === "string" ? job : job.title;
+                                        const url = typeof job === "object" ? job.applyUrl : null;
+                                        return url
+                                          ? <a key={i} href={url} target="_blank" rel="noreferrer" style={{ padding: "3px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11, textDecoration: "none" }}>🧑‍💼 {title}</a>
+                                          : <span key={i} style={{ padding: "3px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11 }}>🧑‍💼 {title}</span>;
+                                      })}
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
