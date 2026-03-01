@@ -504,8 +504,16 @@ Each object in the array must follow this exact structure:
     "websiteQuality": "outdated, no online booking",
     "address": "1234 Main St, Austin TX 78701",
     "googleReviews": { "rating": 4.2, "count": 47 },
-    "socialMedia": { "facebook": "active", "instagram": "none", "linkedin": "none" },
-    "indeedHiring": ["HVAC Technician", "Office Manager"],
+    "socialMedia": { "facebook": "active", "instagram": "none", "linkedin": "active", "tiktok": "none", "youtube": "none" },
+    "indeedHiring": [
+      { "title": "HVAC Technician", "summary": "Full-time, $25-35/hr, 2+ years experience required", "applyUrl": "https://www.indeed.com/viewjob?jk=abc123" }
+    ],
+    "linkedinJobs": [
+      { "title": "Office Manager", "summary": "Part-time, admin experience preferred", "applyUrl": "https://www.linkedin.com/jobs/view/..." }
+    ],
+    "website": "summithvac.com",
+    "websiteStatus": "bad",
+    "websiteQuality": "outdated design, no online booking or lead capture form",
     "estimatedRevenue": "$500K-1M",
     "yearEstablished": "2019",
     "niche": "${prospectNiche.trim() || "local business"}",
@@ -514,6 +522,13 @@ Each object in the array must follow this exact structure:
     "sourceUrls": []
   }
 ]
+
+IMPORTANT FIELD RULES:
+- "websiteStatus": use "none" if no website exists, "bad" if website is outdated/broken/poor quality, "ok" if decent
+- "website": include the full URL if one exists, empty string if none
+- "indeedHiring": array of job objects with title, 1-sentence summary, and direct apply URL from indeed.com. Empty array if not hiring on Indeed.
+- "linkedinJobs": array of job objects from LinkedIn. Empty array if none found.
+- "socialMedia": check all 5 platforms. Use "active" if they post regularly, "inactive" if account exists but rarely posts, "none" if no presence found.
 
 Return exactly ${prospectCount} businesses. Use real data. If a field is unknown use empty string or empty array. DO NOT wrap in markdown code blocks.`;
 
@@ -593,11 +608,14 @@ Return exactly ${prospectCount} businesses. Use real data. If a field is unknown
         phone: r.phone || "",
         email: r.email || "",
         website: r.website || "",
+        websiteStatus: r.websiteStatus || (r.website ? "ok" : "none"),
         websiteQuality: r.websiteQuality || "",
         address: r.address || "",
         googleReviews: r.googleReviews || { rating: 0, count: 0 },
-        socialMedia: r.socialMedia || { facebook: "none", instagram: "none", linkedin: "none" },
-        indeedHiring: r.indeedHiring || [],
+        socialMedia: r.socialMedia || { facebook: "none", instagram: "none", linkedin: "none", tiktok: "none", youtube: "none" },
+        // Normalize indeedHiring: handle both old string[] and new object[] format
+        indeedHiring: (r.indeedHiring || []).map(j => typeof j === "string" ? { title: j, summary: "", applyUrl: "" } : j),
+        linkedinJobs: (r.linkedinJobs || []).map(j => typeof j === "string" ? { title: j, summary: "", applyUrl: "" } : j),
         estimatedRevenue: r.estimatedRevenue || "",
         yearEstablished: r.yearEstablished || "",
         niche: r.niche || prospectNiche,
@@ -1770,7 +1788,6 @@ Respond with ONLY this JSON structure, no markdown:
                             <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Contact Info</div>
                             {p.phone && <div style={{ fontSize: 13, marginBottom: 4 }}>☎ {p.phone}</div>}
                             {p.email && <div style={{ fontSize: 13, marginBottom: 4 }}>✉ {p.email}</div>}
-                            {p.website && <div style={{ fontSize: 13, marginBottom: 4 }}>🌐 {p.website}</div>}
                             {p.address && <div style={{ fontSize: 13, color: t.textMuted }}>📍 {p.address}</div>}
                           </div>
                           <div>
@@ -1778,27 +1795,73 @@ Respond with ONLY this JSON structure, no markdown:
                             {p.googleReviews.count > 0 && <div style={{ fontSize: 13, marginBottom: 4 }}>⭐ {p.googleReviews.rating} ({p.googleReviews.count} reviews)</div>}
                             {p.estimatedRevenue && <div style={{ fontSize: 13, marginBottom: 4 }}>💰 {p.estimatedRevenue}</div>}
                             {p.yearEstablished && <div style={{ fontSize: 13, marginBottom: 4 }}>📅 Est. {p.yearEstablished}</div>}
-                            {p.websiteQuality && <div style={{ fontSize: 13, color: t.textMuted }}>🌐 {p.websiteQuality}</div>}
                           </div>
                         </div>
 
-                        {p.socialMedia && (
+                        {/* Social Media — always show all platforms */}
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Social Media</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {[
+                              { key: "facebook", label: "Facebook", icon: "f" },
+                              { key: "instagram", label: "Instagram", icon: "ig" },
+                              { key: "linkedin", label: "LinkedIn", icon: "in" },
+                              { key: "tiktok", label: "TikTok", icon: "tt" },
+                              { key: "youtube", label: "YouTube", icon: "yt" },
+                            ].map(({ key, label }) => {
+                              const status = p.socialMedia?.[key] || "none";
+                              const active = status === "active";
+                              const inactive = status === "inactive";
+                              return (
+                                <span key={key} style={{ padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600, border: `1px solid ${active ? t.greenBorder : inactive ? t.borderInput : t.borderLight}`, background: active ? t.greenBg : inactive ? t.bgHover : "transparent", color: active ? t.green : inactive ? t.textMuted : t.textFaint }}>
+                                  {active ? "✓" : inactive ? "~" : "✗"} {label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Website status */}
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Website</div>
+                          {p.websiteStatus === "none" || !p.website ? (
+                            <span style={{ fontSize: 12, padding: "3px 10px", borderRadius: 12, background: t.redBg, color: t.red, border: `1px solid ${t.redBorder}`, fontWeight: 600 }}>✗ No website</span>
+                          ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <a href={p.website.startsWith("http") ? p.website : `https://${p.website}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: t.accent, textDecoration: "none" }} onClick={e => e.stopPropagation()}>🌐 {p.website}</a>
+                              {p.websiteStatus === "bad" && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 8, background: "#f9731622", color: "#f97316", border: "1px solid #f9731644", fontWeight: 600 }}>⚠ Poor quality</span>}
+                              {p.websiteQuality && <span style={{ fontSize: 11, color: t.textMuted }}>— {p.websiteQuality}</span>}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Indeed Hiring */}
+                        {p.indeedHiring && p.indeedHiring.length > 0 && (
                           <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Social Media</div>
-                            <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
-                              <span>FB: {p.socialMedia.facebook === "active" ? "✓" : "✗"}</span>
-                              <span>IG: {p.socialMedia.instagram === "active" ? "✓" : "✗"}</span>
-                              <span>LI: {p.socialMedia.linkedin === "active" ? "✓" : "✗"}</span>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📋 Hiring on Indeed</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              {p.indeedHiring.map((job, i) => (
+                                <div key={i} style={{ padding: "10px 12px", background: t.greenBg, border: `1px solid ${t.greenBorder}`, borderRadius: 8 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 13, color: t.green, marginBottom: 3 }}>{job.title || job}</div>
+                                  {job.summary && <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>{job.summary}</div>}
+                                  {job.applyUrl && <a href={job.applyUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: t.accent, textDecoration: "none", fontWeight: 600 }} onClick={e => e.stopPropagation()}>→ View & Apply on Indeed</a>}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
 
-                        {p.indeedHiring && p.indeedHiring.length > 0 && (
+                        {/* LinkedIn Jobs */}
+                        {p.linkedinJobs && p.linkedinJobs.length > 0 && (
                           <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Hiring on Indeed</div>
-                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              {p.indeedHiring.map((job, i) => (
-                                <span key={i} style={{ padding: "4px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11 }}>{job}</span>
+                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>💼 Hiring on LinkedIn</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              {p.linkedinJobs.map((job, i) => (
+                                <div key={i} style={{ padding: "10px 12px", background: "#0077b622", border: "1px solid #0077b644", borderRadius: 8 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0ea5e9", marginBottom: 3 }}>{job.title || job}</div>
+                                  {job.summary && <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>{job.summary}</div>}
+                                  {job.applyUrl && <a href={job.applyUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: t.accent, textDecoration: "none", fontWeight: 600 }} onClick={e => e.stopPropagation()}>→ View on LinkedIn</a>}
+                                </div>
                               ))}
                             </div>
                           </div>
