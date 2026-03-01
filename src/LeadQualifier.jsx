@@ -829,6 +829,20 @@ Respond with ONLY this JSON structure, no markdown:
       description: prospect.buyingSignals ? prospect.buyingSignals.join("; ") : "",
       source: "My Queue",
       followUp: "new",
+      // Preserve all rich prospect data
+      businessName: prospect.businessName,
+      ownerName: prospect.ownerName || "",
+      website: prospect.website || "",
+      websiteQuality: prospect.websiteQuality || "",
+      niche: prospect.niche || "",
+      googleReviews: prospect.googleReviews || { rating: 0, count: 0 },
+      socialMedia: prospect.socialMedia || {},
+      indeedHiring: prospect.indeedHiring || [],
+      estimatedRevenue: prospect.estimatedRevenue || "",
+      yearEstablished: prospect.yearEstablished || "",
+      buyingSignals: prospect.buyingSignals || [],
+      opportunities: prospect.opportunities || [],
+      classification: prospect.classification || null,
       result: qualifyLead({ name: prospect.ownerName || prospect.businessName, company: prospect.businessName, email: prospect.email || "", phone: prospect.phone || "", projectType: "", budget: "", location: prospect.address || "", zipCode: "", timeline: "", description: "", source: "My Queue", followUp: "new" }, criteria, ind.typeName),
     };
     setLeads(prev => [newLead, ...prev]);
@@ -1415,15 +1429,15 @@ Respond with ONLY this JSON structure, no markdown:
                   </div>
 
                   {/* Table header */}
-                  <div className="lead-grid-header" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 1fr 120px", gap: 8, padding: "10px 16px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.textFaint, borderBottom: `1px solid ${t.border}` }}>
-                    <span>Name</span><span>{ind.typeName}</span><span>Budget</span><span>Timeline</span><span>ZIP</span><span>Follow-up</span><span>Status</span>
+                  <div className="lead-grid-header" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 1fr 120px 36px", gap: 8, padding: "10px 16px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.textFaint, borderBottom: `1px solid ${t.border}` }}>
+                    <span>Name</span><span>{ind.typeName}</span><span>Budget</span><span>Timeline</span><span>ZIP</span><span>Follow-up</span><span>Status</span><span></span>
                   </div>
 
                   {filteredLeads.length === 0 ? (
                     <div style={{ textAlign: "center", padding: "40px 20px", color: t.textFaint, fontSize: 14 }}>No leads match your filters</div>
                   ) : filteredLeads.map((lead, idx) => (
                     <div key={lead.id}>
-                      <div className="lead-row" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 1fr 120px", gap: 8, padding: "12px 16px", fontSize: 14, cursor: "pointer", borderBottom: `1px solid ${t.border}`, transition: "background 0.15s", animation: `slideUp 0.25s ease ${Math.min(idx * 0.02, 0.3)}s both`, alignItems: "center" }}
+                      <div className="lead-row" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 1fr 120px 36px", gap: 8, padding: "12px 16px", fontSize: 14, cursor: "pointer", borderBottom: `1px solid ${t.border}`, transition: "background 0.15s", animation: `slideUp 0.25s ease ${Math.min(idx * 0.02, 0.3)}s both`, alignItems: "center" }}
                         onClick={() => setExpandedLead(expandedLead === lead.id ? null : lead.id)}>
                         <div>
                           <InlineCell lead={lead} field="name" style={{ fontWeight: 600, fontSize: 14, display: "block" }}>
@@ -1461,6 +1475,9 @@ Respond with ONLY this JSON structure, no markdown:
                           <span style={{ width: 6, height: 6, borderRadius: "50%", background: lead.result.qualified ? t.green : t.red }} />
                           {lead.result.score}/{lead.result.total}
                         </span>
+                        <div onClick={e => e.stopPropagation()}>
+                          <button onClick={() => handleDeleteLead(lead.id)} style={{ background: "transparent", border: "none", color: t.textFaint, cursor: "pointer", fontSize: 14, padding: "2px 4px", borderRadius: 4, lineHeight: 1 }} title="Delete lead">✕</button>
+                        </div>
                       </div>
 
                       {expandedLead === lead.id && (
@@ -1480,39 +1497,172 @@ Respond with ONLY this JSON structure, no markdown:
                                 <button onClick={() => { setEditingLead(null); setEditForm(null); }} style={{ ...btnSecondary, background: "transparent" }}>Cancel</button>
                               </div>
                             </div>
-                          ) : (
-                            <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
-                              <div style={{ flex: "1 1 260px" }}>
-                                <h4 style={{ fontSize: 12, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Contact Details</h4>
-                                <div style={{ display: "grid", gap: 6, fontSize: 13, color: t.textMuted }}>
-                                  {lead.email && <div>✉ {lead.email}</div>}
-                                  {lead.phone && <div>☎ {lead.phone}</div>}
-                                  {lead.location && <div>📍 {lead.location} {lead.zipCode && `(${lead.zipCode})`}</div>}
-                                  {lead.source && <div>🔗 Source: {lead.source}</div>}
-                                  {lead.description && <div style={{ marginTop: 8, padding: 12, background: t.bgHover, borderRadius: 6, lineHeight: 1.5 }}>{lead.description}</div>}
+                          ) : (() => {
+                            const lp = { id: lead.id, businessName: lead.businessName || lead.company || lead.name, ownerName: lead.ownerName || lead.name, phone: lead.phone, email: lead.email, website: lead.website, address: lead.location, niche: lead.niche || lead.projectType || "", buyingSignals: lead.buyingSignals || [], opportunities: lead.opportunities || [], socialMedia: lead.socialMedia, indeedHiring: lead.indeedHiring, googleReviews: lead.googleReviews, estimatedRevenue: lead.estimatedRevenue, yearEstablished: lead.yearEstablished, websiteQuality: lead.websiteQuality, classification: lead.classification };
+                            return (
+                            <div>
+                              {/* Contact + Qualification row */}
+                              <div style={{ display: "flex", gap: 40, flexWrap: "wrap", marginBottom: 20 }}>
+                                <div style={{ flex: "1 1 260px" }}>
+                                  <h4 style={{ fontSize: 12, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Contact Details</h4>
+                                  <div style={{ display: "grid", gap: 6, fontSize: 13, color: t.textMuted }}>
+                                    {lead.email && <div>✉ {lead.email}</div>}
+                                    {lead.phone && <div>☎ {lead.phone}</div>}
+                                    {lead.website && <div>🌐 {lead.website}</div>}
+                                    {lead.location && <div>📍 {lead.location} {lead.zipCode && `(${lead.zipCode})`}</div>}
+                                    {lead.source && <div>🔗 Source: {lead.source}</div>}
+                                    {lead.estimatedRevenue && <div>💰 {lead.estimatedRevenue}</div>}
+                                    {lead.yearEstablished && <div>📅 Est. {lead.yearEstablished}</div>}
+                                    {lead.description && <div style={{ marginTop: 8, padding: 12, background: t.bgHover, borderRadius: 6, lineHeight: 1.5 }}>{lead.description}</div>}
+                                  </div>
+                                  <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+                                    <button onClick={() => { setEditingLead(lead.id); setEditForm({ ...lead }); }} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>✏ Edit</button>
+                                    <button onClick={() => handleDeleteLead(lead.id)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", color: t.red, borderColor: t.redBorder, background: "transparent" }}>🗑 Delete</button>
+                                  </div>
                                 </div>
-                                <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-                                  <button onClick={() => { setEditingLead(lead.id); setEditForm({ ...lead }); }} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>✏ Edit</button>
-                                  <button onClick={() => handleDeleteLead(lead.id)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", color: t.red, borderColor: t.redBorder, background: "transparent" }}>🗑 Delete</button>
+                                <div style={{ flex: "1 1 300px" }}>
+                                  <h4 style={{ fontSize: 12, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Qualification Breakdown</h4>
+                                  <div style={{ display: "grid", gap: 8 }}>
+                                    {lead.result.criteria.map((c, i) => (
+                                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: t.bgHover, borderRadius: 6, borderLeft: `3px solid ${c.pass ? t.green : t.red}` }}>
+                                        <span style={{ fontSize: 14, color: c.pass ? t.green : t.red }}>{c.pass ? "✓" : "✕"}</span>
+                                        <div><div style={{ fontSize: 13, fontWeight: 600, color: c.pass ? t.green : t.red }}>{c.name}</div><div style={{ fontSize: 11, color: t.textDim }}>{c.detail}</div></div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div style={{ marginTop: 12, padding: "10px 14px", background: lead.result.qualified ? t.greenBg : t.redBg, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600 }}>Final Score</span>
+                                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: lead.result.qualified ? t.green : t.red }}>{lead.result.score}/{lead.result.total}</span>
+                                  </div>
                                 </div>
                               </div>
-                              <div style={{ flex: "1 1 300px" }}>
-                                <h4 style={{ fontSize: 12, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Qualification Breakdown</h4>
-                                <div style={{ display: "grid", gap: 8 }}>
-                                  {lead.result.criteria.map((c, i) => (
-                                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: t.bgHover, borderRadius: 6, borderLeft: `3px solid ${c.pass ? t.green : t.red}` }}>
-                                      <span style={{ fontSize: 14, color: c.pass ? t.green : t.red }}>{c.pass ? "✓" : "✕"}</span>
-                                      <div><div style={{ fontSize: 13, fontWeight: 600, color: c.pass ? t.green : t.red }}>{c.name}</div><div style={{ fontSize: 11, color: t.textDim }}>{c.detail}</div></div>
+
+                              {/* Buying Signals */}
+                              {lead.buyingSignals?.length > 0 && (
+                                <div style={{ marginBottom: 16 }}>
+                                  <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>🔥 Buying Signals</div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {lead.buyingSignals.map((sig, i) => (
+                                      <div key={i} style={{ padding: "6px 10px", background: t.accent + "11", borderLeft: `3px solid ${t.accent}`, borderRadius: 4, fontSize: 12 }}>{sig}</div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Opportunities */}
+                              {lead.opportunities?.length > 0 && (
+                                <div style={{ marginBottom: 16 }}>
+                                  <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>💡 Opportunities</div>
+                                  <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: t.textMuted }}>
+                                    {lead.opportunities.map((opp, i) => <li key={i} style={{ marginBottom: 2 }}>{opp}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Social + Hiring row */}
+                              {(lead.socialMedia || lead.indeedHiring?.length > 0 || lead.googleReviews?.count > 0) && (
+                                <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
+                                  {lead.googleReviews?.count > 0 && <div style={{ fontSize: 13 }}>⭐ {lead.googleReviews.rating} ({lead.googleReviews.count} reviews)</div>}
+                                  {lead.socialMedia && <div style={{ fontSize: 12, color: t.textMuted }}>FB: {lead.socialMedia.facebook === "active" ? "✓" : "✗"} · IG: {lead.socialMedia.instagram === "active" ? "✓" : "✗"} · LI: {lead.socialMedia.linkedin === "active" ? "✓" : "✗"}</div>}
+                                  {lead.indeedHiring?.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{lead.indeedHiring.map((job, i) => <span key={i} style={{ padding: "3px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11 }}>{job}</span>)}</div>}
+                                </div>
+                              )}
+
+                              {/* Action buttons */}
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 12, borderTop: `1px solid ${t.border}`, marginBottom: 12 }}>
+                                <button onClick={() => handleGeneratePlaybook(lp)} disabled={generatingPlaybook === lead.id}
+                                  style={{ ...btnSecondary, fontSize: 12, borderColor: openPlaybook === lead.id ? t.accent : t.borderLight, color: openPlaybook === lead.id ? t.accent : t.textMuted, background: openPlaybook === lead.id ? t.accent + "11" : t.bgHover, opacity: generatingPlaybook === lead.id ? 0.6 : 1 }}>
+                                  {generatingPlaybook === lead.id ? "⏳ Building..." : openPlaybook === lead.id && playbookData[lead.id] ? "📋 Hide Playbook" : "📋 Sales Playbook"}
+                                </button>
+                                <button onClick={() => handleDraftEmail(lp)} disabled={draftingEmail === lead.id}
+                                  style={{ ...btnSecondary, fontSize: 12 }}>
+                                  {draftingEmail === lead.id ? "Drafting..." : emailDrafts[lead.id] ? "Re-draft Email" : "Draft Email"}
+                                </button>
+                                {emailDrafts[lead.id] && (
+                                  <button onClick={() => handleSendEmail(lp)} disabled={sendingEmail === lead.id}
+                                    style={{ ...btnPrimary, fontSize: 12, padding: "8px 18px", opacity: sendingEmail === lead.id ? 0.6 : 1 }}>
+                                    {sendingEmail === lead.id ? "Sending..." : "📤 Send Email"}
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Email draft */}
+                              {emailDrafts[lead.id] && (
+                                <div style={{ marginBottom: 16, padding: 16, background: t.bgAlt, borderRadius: 8, border: `1px solid ${t.borderLight}` }}>
+                                  <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📧 Email Draft</div>
+                                  <textarea style={{ ...inputStyle, minHeight: 120, fontSize: 12, lineHeight: 1.6, resize: "vertical" }}
+                                    value={emailDrafts[lead.id]} onChange={e => setEmailDrafts(prev => ({ ...prev, [lead.id]: e.target.value }))} />
+                                  <button onClick={() => { navigator.clipboard.writeText(emailDrafts[lead.id]); showToast("Copied to clipboard"); }} style={{ ...btnSecondary, fontSize: 12, marginTop: 8 }}>Copy</button>
+                                </div>
+                              )}
+
+                              {/* Playbook */}
+                              {openPlaybook === lead.id && (
+                                <div style={{ marginTop: 4, animation: "slideUp 0.3s ease" }}>
+                                  {generatingPlaybook === lead.id ? (
+                                    <div style={{ padding: "32px 24px", textAlign: "center", background: t.bgAlt, borderRadius: 10, border: `1px solid ${t.borderLight}` }}>
+                                      <div style={{ fontSize: 32, marginBottom: 12, animation: "pulse 1.2s infinite" }}>📋</div>
+                                      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Building Sales Playbook…</div>
+                                      <div style={{ fontSize: 12, color: t.textMuted }}>Diagnosing pain points · Sequencing the play · Projecting revenue</div>
                                     </div>
-                                  ))}
+                                  ) : playbookData[lead.id] ? (
+                                    <div style={{ background: t.bgAlt, border: `1px solid ${t.borderLight}`, borderRadius: 10, overflow: "hidden" }}>
+                                      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, background: t.bgHover }}>
+                                        <span style={{ fontSize: 18 }}>📋</span>
+                                        <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Sales Playbook</span>
+                                        <span style={{ fontSize: 11, color: t.textMuted, marginLeft: "auto" }}>Ascend Solutions × {lp.businessName}</span>
+                                      </div>
+                                      <div style={{ padding: "20px" }}>
+                                        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.textDim, textTransform: "uppercase", marginBottom: 12 }}>🔍 Diagnosis</div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                          {(playbookData[lead.id].diagnosis || []).map((item, i) => {
+                                            const pc = { URGENT: "#ef4444", HIGH: "#f97316", MEDIUM: "#f59e0b", LOW: "#6b7280" };
+                                            const col = pc[item.priority] || pc.LOW;
+                                            return <div key={i} style={{ borderLeft: `4px solid ${col}`, padding: "10px 14px", background: col + "0e", borderRadius: "0 8px 8px 0" }}>
+                                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", background: col + "25", color: col, borderRadius: 4 }}>{item.priority}</span><span style={{ fontSize: 13, fontWeight: 700 }}>{item.problem}</span></div>
+                                              <div style={{ fontSize: 12, color: t.textMuted }}>💸 {item.costingThem}</div>
+                                            </div>;
+                                          })}
+                                        </div>
+                                      </div>
+                                      <div style={{ padding: "0 20px 20px" }}>
+                                        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.textDim, textTransform: "uppercase", marginBottom: 12 }}>🎯 Recommended Play</div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                          {[{ key: "step1", icon: "🚀", color: "#34d399" }, { key: "step2", icon: "📈", color: "#f59e0b" }, { key: "step3", icon: "⚡", color: "#a78bfa" }].map(({ key, icon, color }) => {
+                                            const step = playbookData[lead.id]?.play?.[key]; if (!step) return null;
+                                            return <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}33`, overflow: "hidden" }}>
+                                              <div style={{ padding: "10px 16px", borderLeft: `4px solid ${color}`, background: color + "15", display: "flex", alignItems: "center", gap: 10 }}>
+                                                <span style={{ fontSize: 14, fontWeight: 700, color }}>{icon} {step.title}</span>
+                                                {(step.price || step.monthlyRetainer) && <span style={{ marginLeft: "auto", padding: "3px 10px", background: color + "25", color, borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{step.price || step.monthlyRetainer}</span>}
+                                              </div>
+                                              <div style={{ padding: "10px 16px", background: t.bgHover, fontSize: 12, color: t.textMuted }}>
+                                                {step.offer && <div style={{ fontWeight: 600, color: t.text, marginBottom: 4 }}>{step.offer}</div>}
+                                                {step.whySolvesIt && <div>✓ {step.whySolvesIt}</div>}
+                                              </div>
+                                            </div>;
+                                          })}
+                                        </div>
+                                      </div>
+                                      {playbookData[lead.id].revenue && (
+                                        <div style={{ margin: "0 20px 20px", padding: "16px 20px", background: `linear-gradient(135deg, ${t.accent}15, ${t.accent}06)`, border: `1px solid ${t.accent}44`, borderRadius: 8 }}>
+                                          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: t.accent, textTransform: "uppercase", marginBottom: 12 }}>📊 Revenue Projection</div>
+                                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                                            {[{ label: "Monthly", val: playbookData[lead.id].revenue.monthlyValue }, { label: "Annual", val: playbookData[lead.id].revenue.annualValue }, { label: "Your Cut/yr", val: playbookData[lead.id].revenue.yourCutAnnual }].map(({ label, val }) => (
+                                              <div key={label} style={{ textAlign: "center" }}>
+                                                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, fontWeight: 700, color: t.accent }}>{val || "—"}</div>
+                                                <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", marginTop: 4 }}>{label}</div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
                                 </div>
-                                <div style={{ marginTop: 12, padding: "10px 14px", background: lead.result.qualified ? t.greenBg : t.redBg, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <span style={{ fontSize: 13, fontWeight: 600 }}>Final Score</span>
-                                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: lead.result.qualified ? t.green : t.red }}>{lead.result.score}/{lead.result.total}</span>
-                                </div>
-                              </div>
+                              )}
                             </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -1678,9 +1828,6 @@ Respond with ONLY this JSON structure, no markdown:
                           <button onClick={() => expandedProspect === p.id ? setExpandedProspect(null) : setExpandedProspect(p.id)} style={{ ...btnSecondary, fontSize: 12 }}>
                             {expandedProspect === p.id ? "Hide Details" : "Show Details"}
                           </button>
-                          <button onClick={() => handleDraftEmail(p)} disabled={draftingEmail === p.id} style={{ ...btnSecondary, fontSize: 12 }}>
-                            {draftingEmail === p.id ? "Drafting..." : emailDrafts[p.id] ? "Re-draft Email" : "Draft Email"}
-                          </button>
                           <button
                             onClick={() => handleGeneratePlaybook(p)}
                             disabled={generatingPlaybook === p.id}
@@ -1698,16 +1845,6 @@ Respond with ONLY this JSON structure, no markdown:
                             {addedToLeads.has(p.id) ? "✓ In Leads" : "➕ Add to Leads"}
                           </button>
                         </div>
-
-                        {emailDrafts[p.id] && (
-                          <div style={{ marginTop: 12, padding: 16, background: t.bgAlt, borderRadius: 8, border: `1px solid ${t.borderLight}` }}>
-                            <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📧 Email Draft</div>
-                            <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 12, whiteSpace: "pre-wrap" }}>{emailDrafts[p.id]}</div>
-                            <button onClick={() => { navigator.clipboard.writeText(emailDrafts[p.id]); showToast("Email copied to clipboard"); }} style={{ ...btnPrimary, fontSize: 12, padding: "6px 16px" }}>
-                              Copy to Clipboard
-                            </button>
-                          </div>
-                        )}
 
                         {expandedProspect === p.id && p.sourceUrls && p.sourceUrls.length > 0 && (
                           <div style={{ marginTop: 12, padding: 12, background: t.bgHover, borderRadius: 6 }}>
