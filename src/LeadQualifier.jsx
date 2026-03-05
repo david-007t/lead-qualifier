@@ -800,7 +800,7 @@ Use empty string for fields you cannot find. Return only real listings you found
 
 ACTIVE LISTINGS ONLY: Only return listings that appear to be currently active — posted within the last 30 days. Skip any listings that show as expired, closed, or have past dates. Include the posting date if visible.
 
-CRITICAL — URL ACCURACY: For each listing, the jobUrl MUST correspond to the correct company and job title. If you cannot confirm a direct URL matches that specific company and role, set jobUrl to an empty string. Do NOT guess or use a URL from a different company. Accuracy matters more than quantity.`;
+For each job listing, you MUST include a real, working URL to the actual job posting. Search results include URLs — use them. The jobUrl must point to the specific job listing page for that exact company and role. If a search result does not include a clickable URL to the specific listing, do NOT include that listing in your results at all. I would rather get 3 verified listings with real links than 10 listings without links. ONLY return listings where you have a confirmed URL from the search results.`;
 
       try {
         const response = await fetch("/api/anthropic", {
@@ -877,13 +877,23 @@ CRITICAL — URL ACCURACY: For each listing, the jobUrl MUST correspond to the c
       return true;
     });
 
-    // Build a normalized set of pipeline company names for dedup check
-    const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
-    const pipelineCompanyNames = new Set(leads.map(l => normalizeName(l.company)));
+    // Fix 1: Filter out listings with no confirmed job URL
+    const withLinks = dedupedRaw.filter(r => r.jobUrl && r.jobUrl.trim() !== "");
 
-    const results = dedupedRaw.map((r, i) => {
+    // Fix 4: Build pipeline lead map — normalizedCompany → array of followUp statuses
+    const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
+    const pipelineLeadMap = {};
+    leads.forEach(l => {
+      const norm = normalizeName(l.company);
+      if (!pipelineLeadMap[norm]) pipelineLeadMap[norm] = [];
+      pipelineLeadMap[norm].push(l.followUp || "new");
+    });
+
+    const results = withLinks.map((r, i) => {
       const normCompany = normalizeName(r.companyName);
-      const alreadyInPipeline = pipelineCompanyNames.has(normCompany);
+      const statuses = pipelineLeadMap[normCompany] || [];
+      const isActedOn = statuses.some(s => s === "contacted" || s === "replied");
+      const isInPipeline = statuses.length > 0;
       return {
         id: Date.now() + i + Math.random(),
         companyName: r.companyName || "Unknown Company",
@@ -905,13 +915,38 @@ CRITICAL — URL ACCURACY: For each listing, the jobUrl MUST correspond to the c
         urgency: r.urgency || "medium",
         buyingSignals: r.buyingSignals || [],
         opportunities: r.opportunities || [],
-        pipelineTag: alreadyInPipeline ? "⚡ New role — already in pipeline" : null,
+        // Only hide if already acted on (contacted/replied); new pipeline leads still show
+        skipRender: isActedOn,
+        pipelineTag: isInPipeline && !isActedOn ? "✓ Already in Pipeline" : null,
       };
-    });
+    }).filter(r => !r.skipRender);
 
     setIndeedResults(results);
     showToast(`Found ${results.length} companies hiring`);
     setIndeedLoading(false);
+  };
+
+  // ─── ADD INDEED LISTING TO PIPELINE ───────────────────────
+  const handleAddIndeedToPipeline = (r) => {
+    const newLead = {
+      id: Date.now() + Math.random(),
+      createdAt: Date.now(),
+      name: r.companyName,
+      company: r.companyName,
+      email: r.email || "",
+      phone: r.phone || "",
+      projectType: "inbound_call",
+      budget: "",
+      location: r.location || "Remote",
+      zipCode: "",
+      timeline: "",
+      source: "LeadGen",
+      description: `${r.jobTitle}${r.jobPayRate ? ` — ${r.jobPayRate}` : ""}. ${r.automationAngle || ""}`.trim().replace(/\.$/, ""),
+      followUp: "new",
+      result: { qualified: true, score: 1, total: 1, criteria: [] },
+    };
+    setLeads(prev => [newLead, ...prev]);
+    showToast(`Added ${r.companyName} to Pipeline`);
   };
 
   // ─── INDEED EMAIL DRAFT ───────────────────────────────────
@@ -2366,6 +2401,18 @@ Respond with ONLY a JSON object:
                               style={{ ...btnPrimary, fontSize: 12, padding: "8px 16px", opacity: draftingIndeedEmail === r.id ? 0.6 : 1 }}>
                               {draftingIndeedEmail === r.id ? "Drafting..." : indeedEmailDrafts[r.id] ? "Re-draft Outreach" : "Draft Outreach"}
                             </button>
+                            {(() => {
+                              const normCo = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
+                              const inPipeline = leads.some(l => normCo(l.company) === normCo(r.companyName));
+                              return (
+                                <button
+                                  onClick={() => !inPipeline && handleAddIndeedToPipeline(r)}
+                                  disabled={inPipeline}
+                                  style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: inPipeline ? t.green + "22" : t.bgHover, color: inPipeline ? t.green : t.textMuted, opacity: inPipeline ? 0.8 : 1, cursor: inPipeline ? "default" : "pointer" }}>
+                                  {inPipeline ? "✓ In Pipeline" : "➕ Add to Pipeline"}
+                                </button>
+                              );
+                            })()}
                             <button onClick={() => setIndeedQueueActions(prev => ({ ...prev, [r.id]: prev[r.id] === "contacted" ? undefined : "contacted" }))}
                               style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: indeedQueueActions[r.id] === "contacted" ? t.accent + "22" : t.bgHover, color: indeedQueueActions[r.id] === "contacted" ? t.accent : t.textMuted }}>
                               {indeedQueueActions[r.id] === "contacted" ? "✓ Contacted" : "Mark Contacted"}
