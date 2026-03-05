@@ -742,12 +742,14 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
     const allRaw = [];
 
     for (const batch of batches) {
-      // Problem 3 fixed: dead-simple queries — no site: operators, no extra keywords
-      const searchQueries = batch.map(role =>
+      // 3 query variations per role for broader coverage
+      const searchQueries = batch.flatMap(role => [
         indeedCity.trim()
           ? `"${role}" remote job hiring ${indeedCity.trim()}`
-          : `"${role}" remote job hiring 2025 OR 2026`
-      );
+          : `"${role}" remote job hiring 2025 OR 2026`,
+        `"${role}" remote hiring site:indeed.com OR site:linkedin.com/jobs OR site:ziprecruiter.com`,
+        `"${role}" remote position open site:glassdoor.com OR site:careerbuilder.com`,
+      ]);
 
       const countForBatch = Math.max(3, Math.ceil(indeedCount / batches.length));
 
@@ -794,7 +796,11 @@ After searching, respond with ONLY a JSON array. No markdown, no explanation —
 ]
 
 urgency: "high" = posted ≤7 days, "medium" = 8-30 days, "low" = 30+ days.
-Use empty string for fields you cannot find. Return only real listings you found.`;
+Use empty string for fields you cannot find. Return only real listings you found.
+
+ACTIVE LISTINGS ONLY: Only return listings that appear to be currently active — posted within the last 30 days. Skip any listings that show as expired, closed, or have past dates. Include the posting date if visible.
+
+CRITICAL — URL ACCURACY: For each listing, the jobUrl MUST correspond to the correct company and job title. If you cannot confirm a direct URL matches that specific company and role, set jobUrl to an empty string. Do NOT guess or use a URL from a different company. Accuracy matters more than quantity.`;
 
       try {
         const response = await fetch("/api/anthropic", {
@@ -862,28 +868,46 @@ Use empty string for fields you cannot find. Return only real listings you found
       return;
     }
 
-    const results = allRaw.map((r, i) => ({
-      id: Date.now() + i + Math.random(),
-      companyName: r.companyName || "Unknown Company",
-      industry: r.industry || "",
-      location: r.location || (indeedCity.trim() || "Remote"),
-      website: r.website || "",
-      phone: r.phone || "",
-      email: r.email || "",
-      jobTitle: r.jobTitle || "",
-      jobPayRate: r.jobPayRate || "",
-      annualCost: r.annualCost || "",
-      postingDate: r.postingDate || "",
-      jobUrl: r.jobUrl || "",
-      companySize: r.companySize || "",
-      googleReviews: r.googleReviews || { rating: 0, count: 0 },
-      automationAngle: r.automationAngle || "",
-      automationUseCase: r.automationUseCase || "",
-      pitchHook: r.pitchHook || "",
-      urgency: r.urgency || "medium",
-      buyingSignals: r.buyingSignals || [],
-      opportunities: r.opportunities || [],
-    }));
+    // Deduplicate within allRaw by company+jobTitle
+    const seenKeys = new Set();
+    const dedupedRaw = allRaw.filter(r => {
+      const key = `${(r.companyName || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "")}|${(r.jobTitle || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "")}`;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
+
+    // Build a normalized set of pipeline company names for dedup check
+    const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
+    const pipelineCompanyNames = new Set(leads.map(l => normalizeName(l.company)));
+
+    const results = dedupedRaw.map((r, i) => {
+      const normCompany = normalizeName(r.companyName);
+      const alreadyInPipeline = pipelineCompanyNames.has(normCompany);
+      return {
+        id: Date.now() + i + Math.random(),
+        companyName: r.companyName || "Unknown Company",
+        industry: r.industry || "",
+        location: r.location || (indeedCity.trim() || "Remote"),
+        website: r.website || "",
+        phone: r.phone || "",
+        email: r.email || "",
+        jobTitle: r.jobTitle || "",
+        jobPayRate: r.jobPayRate || "",
+        annualCost: r.annualCost || "",
+        postingDate: r.postingDate || "",
+        jobUrl: r.jobUrl || "",
+        companySize: r.companySize || "",
+        googleReviews: r.googleReviews || { rating: 0, count: 0 },
+        automationAngle: r.automationAngle || "",
+        automationUseCase: r.automationUseCase || "",
+        pitchHook: r.pitchHook || "",
+        urgency: r.urgency || "medium",
+        buyingSignals: r.buyingSignals || [],
+        opportunities: r.opportunities || [],
+        pipelineTag: alreadyInPipeline ? "⚡ New role — already in pipeline" : null,
+      };
+    });
 
     setIndeedResults(results);
     showToast(`Found ${results.length} companies hiring`);
@@ -1475,7 +1499,7 @@ Respond with ONLY a JSON object:
         {/* Tabs */}
         <div style={{ borderBottom: `1px solid ${t.border}` }}>
           <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 32px", display: "flex", gap: 2, overflowX: "auto" }} className="tab-bar">
-            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "indeed", label: "Indeed Leads" }, { id: "queue", label: "Joe's Queue" }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
+            {[{ id: "indeed", label: "LeadGen" }, { id: "leads", label: "Pipeline", count: leads.length }, { id: "queue", label: "Outreach" }, { id: "dashboard", label: "Dashboard" }].map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)} style={{ padding: "12px 20px", background: tab === tb.id ? t.accent : "transparent", color: tab === tb.id ? "#0c0a09" : t.textMuted, border: "none", borderBottom: tab === tb.id ? `3px solid ${t.accent}` : "3px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: tab === tb.id ? 700 : 500, letterSpacing: "0.02em", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
                 {tb.label}
                 {tb.count !== undefined && <span style={{ background: tab === tb.id ? "#00000033" : t.bgHover, color: tab === tb.id ? "#0c0a09" : t.textDim, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{tb.count}</span>}
@@ -1487,123 +1511,134 @@ Respond with ONLY a JSON object:
         <div style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }} className="app-content">
 
           {/* ════════════ DASHBOARD ════════════ */}
-          {tab === "dashboard" && (
-            <div style={{ animation: "fadeIn 0.3s ease" }}>
-              {!analytics ? (
-                <div style={{ textAlign: "center", padding: "80px 20px" }}>
-                  <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📊</div>
-                  <h3 style={{ fontSize: 18, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No data yet</h3>
-                  <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 24 }}>Add some leads to see your qualification analytics</p>
-                  <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={() => setTab("prospects")} style={btnPrimary}>⚡ Find Prospects</button>
-                    <button onClick={() => setTab("add")} style={btnSecondary}>+ Add Manually</button>
-                    <button onClick={loadDemoData} style={btnSecondary}>Load Demo Data</button>
-                  </div>
+          {tab === "dashboard" && (() => {
+            // Compute dashboard data inline
+            const outreachSentIds = new Set([
+              ...Object.keys(indeedEmailDrafts),
+              ...Object.keys(indeedApplyPitch),
+              ...Object.keys(indeedContactDraft),
+              ...Object.keys(indeedLinkedInMsg),
+            ]);
+            const outreachSentCount = outreachSentIds.size;
+
+            const inferSource = (jobUrl) => {
+              const u = jobUrl || "";
+              if (u.includes("indeed.com")) return "Indeed";
+              if (u.includes("linkedin.com")) return "LinkedIn";
+              if (u.includes("ziprecruiter")) return "ZipRecruiter";
+              if (u.includes("glassdoor")) return "Glassdoor";
+              if (u.includes("careerbuilder")) return "CareerBuilder";
+              return "Other";
+            };
+            const sourceCounts = {};
+            indeedResults.forEach(r => {
+              const s = inferSource(r.jobUrl);
+              sourceCounts[s] = (sourceCounts[s] || 0) + 1;
+            });
+            const sourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+            const roleCounts = {};
+            indeedResults.forEach(r => {
+              const jt = r.jobTitle || "Other";
+              const matchedRole = INDEED_ROLES.find(ir => jt.toLowerCase().includes(ir.label.toLowerCase().split(" ")[0]));
+              const role = matchedRole ? matchedRole.label : jt.split(" ").slice(0, 3).join(" ");
+              roleCounts[role] = (roleCounts[role] || 0) + 1;
+            });
+            const roleData = Object.entries(roleCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+
+            const recentLeads = [...indeedResults].reverse().slice(0, 5);
+            const hasData = indeedResults.length > 0 || leads.length > 0;
+
+            return (
+              <div style={{ animation: "fadeIn 0.3s ease" }}>
+                <div style={{ marginBottom: 24 }}>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>📊 Dashboard</h2>
+                  <p style={{ color: t.textDim, fontSize: 14 }}>Lead generation overview — run a search in LeadGen to populate this.</p>
                 </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }} className="chart-grid">
-                  {/* Stats row */}
-                  <div style={{ ...cardStyle, display: "flex", justifyContent: "space-around", alignItems: "center", gridColumn: "1 / -1" }} className="stat-row">
-                    {[
-                      { val: leads.length, label: "Total Leads", color: t.accent },
-                      { val: `${analytics.qualRate}%`, label: "Qual Rate", color: t.green },
-                      { val: `$${(analytics.qualifiedPipeline / 1000000).toFixed(1)}M`, label: "Qualified Pipeline", color: t.accent },
-                      { val: `$${analytics.avgDeal >= 1000000 ? (analytics.avgDeal / 1000000).toFixed(1) + "M" : Math.round(analytics.avgDeal / 1000).toLocaleString() + "K"}`, label: "Avg Deal", color: t.text },
-                    ].map((s, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center" }}>
-                        {i > 0 && <div style={{ width: 1, height: 48, background: t.border, marginRight: 32, marginLeft: 8 }} />}
-                        <div style={{ textAlign: "center" }}>
-                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 36, fontWeight: 700, color: s.color }}>{s.val}</div>
-                          <div style={{ color: t.textDim, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{s.label}</div>
+
+                {/* Stats row */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 24 }}>
+                  {[
+                    { val: indeedResults.length, label: "Leads Found", sub: "this session", color: t.accent },
+                    { val: leads.length, label: "In Pipeline", sub: "saved leads", color: t.green },
+                    { val: outreachSentCount, label: "Outreach Drafted", sub: "emails / pitches / DMs", color: "#a78bfa" },
+                    { val: "0%", label: "Response Rate", sub: "coming soon", color: t.textDim },
+                  ].map((s, i) => (
+                    <div key={i} style={{ ...cardStyle, marginBottom: 0, textAlign: "center", padding: "20px 16px" }}>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 40, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.val}</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginTop: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.label}</div>
+                      <div style={{ fontSize: 11, color: t.textFaint, marginTop: 3 }}>{s.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {!hasData ? (
+                  <div style={{ ...cardStyle, textAlign: "center", padding: "60px 24px" }}>
+                    <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>🎯</div>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, color: t.textMuted, marginBottom: 8 }}>No data yet</h3>
+                    <p style={{ color: t.textFaint, fontSize: 14, marginBottom: 20 }}>Run a search in LeadGen to see your analytics here</p>
+                    <button onClick={() => setTab("indeed")} style={btnPrimary}>Go to LeadGen →</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
+                    {/* Leads by source */}
+                    {sourceData.length > 0 && (
+                      <div style={cardStyle}>
+                        <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Leads by Source</h3>
+                        <ResponsiveContainer width="100%" height={Math.max(140, sourceData.length * 36)}>
+                          <BarChart data={sourceData} layout="vertical" margin={{ left: 0, right: 20 }}>
+                            <XAxis type="number" hide />
+                            <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12, fill: t.textMuted }} axisLine={false} tickLine={false} />
+                            <Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} cursor={{ fill: t.bgHover }} />
+                            <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                              {sourceData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    {/* Leads by role */}
+                    {roleData.length > 0 && (
+                      <div style={cardStyle}>
+                        <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Leads by Role</h3>
+                        <ResponsiveContainer width="100%" height={Math.max(140, roleData.length * 36)}>
+                          <BarChart data={roleData} layout="vertical" margin={{ left: 0, right: 20 }}>
+                            <XAxis type="number" hide />
+                            <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: t.textMuted }} axisLine={false} tickLine={false} />
+                            <Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} cursor={{ fill: t.bgHover }} />
+                            <Bar dataKey="value" radius={[0, 4, 4, 0]} fill="#f59e0b" barSize={18} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    {/* Recent activity */}
+                    {recentLeads.length > 0 && (
+                      <div style={{ ...cardStyle, gridColumn: "1 / -1" }}>
+                        <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Recent Activity</h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {recentLeads.map((r, i) => (
+                            <div key={r.id || i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px", background: t.bgHover, borderRadius: 8, borderLeft: `3px solid ${t.accent}` }}>
+                              <span style={{ fontSize: 18 }}>💼</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.companyName}</div>
+                                <div style={{ fontSize: 12, color: t.textDim }}>{r.jobTitle} · {r.jobPayRate} · {r.location}</div>
+                              </div>
+                              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                <div style={{ fontSize: 12, color: r.urgency === "high" ? t.green : t.textDim, fontWeight: 700 }}>{r.urgency === "high" ? "🔥 Hot" : r.urgency === "medium" ? "Active" : "Listed"}</div>
+                                {r.postingDate && <div style={{ fontSize: 11, color: t.textFaint }}>{r.postingDate}</div>}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
-
-                  {/* Pie chart */}
-                  <div style={cardStyle}>
-                    <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Qualification Split</h3>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <PieChart><Pie data={[{ name: "Qualified", value: analytics.qualified }, { name: "Unqualified", value: analytics.unqualified }]} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value"><Cell fill={t.green} /><Cell fill={t.red} /></Pie><Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} /></PieChart>
-                    </ResponsiveContainer>
-                    <div style={{ display: "flex", justifyContent: "center", gap: 20, fontSize: 12, marginTop: 4 }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: t.green, display: "inline-block" }} /> Qualified ({analytics.qualified})</span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: t.red, display: "inline-block" }} /> Unqualified ({analytics.unqualified})</span>
-                    </div>
-                  </div>
-
-                  {/* By project type */}
-                  <div style={cardStyle}>
-                    <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>By {ind.typeName}</h3>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={analytics.typeData} layout="vertical" margin={{ left: 0, right: 20 }}>
-                        <XAxis type="number" hide /><YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11, fill: t.textMuted }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} cursor={{ fill: t.bgHover }} />
-                        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={18}>{analytics.typeData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}</Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* By source */}
-                  <div style={cardStyle}>
-                    <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>By Lead Source</h3>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={analytics.sourceData} layout="vertical" margin={{ left: 0, right: 20 }}>
-                        <XAxis type="number" hide /><YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11, fill: t.textMuted }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} cursor={{ fill: t.bgHover }} />
-                        <Bar dataKey="value" radius={[0, 4, 4, 0]} fill="#60a5fa" barSize={18} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Budget distribution */}
-                  {analytics.budgetDistribution.length > 0 && (
-                    <div style={{ ...cardStyle, gridColumn: "1 / -1" }}>
-                      <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Budget Distribution</h3>
-                      <ResponsiveContainer width="100%" height={160}>
-                        <BarChart data={analytics.budgetDistribution} margin={{ left: 0, right: 20, bottom: 0 }}>
-                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: t.textMuted }} axisLine={false} tickLine={false} />
-                          <YAxis hide />
-                          <Tooltip contentStyle={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 8, fontSize: 13 }} cursor={{ fill: t.bgHover }} />
-                          <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={48}>
-                            {analytics.budgetDistribution.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  {/* Disqualification reasons */}
-                  {analytics.topDisqualReasons.length > 0 && (
-                    <div style={{ ...cardStyle, gridColumn: "1 / -1" }}>
-                      <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Top Disqualification Reasons</h3>
-                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        {analytics.topDisqualReasons.map((r, i) => (
-                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: t.bgHover, borderRadius: 8, borderLeft: `3px solid ${t.red}` }}>
-                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, fontWeight: 700, color: t.red }}>{r.count}</span>
-                            <span style={{ fontSize: 13, color: t.textMuted }}>{r.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Follow-up pipeline */}
-                  <div style={{ ...cardStyle, gridColumn: "1 / -1" }}>
-                    <h3 style={{ fontSize: 13, fontWeight: 700, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>Follow-Up Pipeline</h3>
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      {FOLLOWUP_STATUSES.map(s => (
-                        <div key={s.id} style={{ flex: "1 1 100px", padding: "16px 12px", background: t.bgHover, borderRadius: 8, textAlign: "center", borderTop: `3px solid ${s.color}`, minWidth: 100 }}>
-                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 28, fontWeight: 700, color: s.color }}>{analytics.byFollowUp[s.id] || 0}</div>
-                          <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 4 }}>{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
           {/* ════════════ ADD LEAD ════════════ */}
           {tab === "add" && (
@@ -2159,8 +2194,8 @@ Respond with ONLY a JSON object:
           {tab === "indeed" && (
             <div style={{ animation: "fadeIn 0.3s ease" }}>
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>💼 Indeed Lead Hunter</h2>
-                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Find companies posting for roles AI automation can replace. Active job listings = proven budget + confirmed need.</p>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>🎯 Lead Generator</h2>
+                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Find companies posting roles AI can replace. Searches across Indeed, LinkedIn, ZipRecruiter, Glassdoor, and more.</p>
               </div>
 
               <div style={cardStyle}>
@@ -2264,6 +2299,7 @@ Respond with ONLY a JSON object:
                                 <span style={{ padding: "4px 10px", background: urgencyBg, color: urgencyColor, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{urgencyLabel}</span>
                                 {indeedQueueActions[r.id] === "contacted" && <span style={{ padding: "4px 10px", background: t.accent + "22", color: t.accent, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✓ Contacted</span>}
                                 {indeedQueueActions[r.id] === "replied" && <span style={{ padding: "4px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✓ Replied</span>}
+                                {r.pipelineTag && <span style={{ padding: "4px 10px", background: "#f59e0b22", color: "#f59e0b", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{r.pipelineTag}</span>}
                               </div>
                               {r.industry && <div style={{ fontSize: 13, color: t.textMuted }}>{r.industry} · {r.location}</div>}
                             </div>
@@ -2374,12 +2410,14 @@ Respond with ONLY a JSON object:
                                     <span style={{ fontSize: 10, padding: "2px 8px", background: "#34d39922", color: "#34d399", borderRadius: 12, fontWeight: 700 }}>Fastest</span>
                                   </div>
                                   <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Apply through the job posting with a pitch instead of a resume.</p>
-                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                                    {r.jobUrl && (
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+                                    {r.jobUrl ? (
                                       <a href={r.jobUrl} target="_blank" rel="noopener noreferrer"
                                         style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", textDecoration: "none", display: "inline-block" }}>
                                         Open Listing ↗
                                       </a>
+                                    ) : (
+                                      <span style={{ fontSize: 12, color: t.textFaint, fontStyle: "italic" }}>No direct link found</span>
                                     )}
                                     <button onClick={() => handleIndeedGenerateApplyPitch(r)} disabled={generatingApplyPitch === r.id}
                                       style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#34d399", opacity: generatingApplyPitch === r.id ? 0.6 : 1 }}>
@@ -2452,7 +2490,7 @@ Respond with ONLY a JSON object:
                                   </div>
                                   <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Find the hiring manager on LinkedIn and send a personal message.</p>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                                    <a href={`https://www.google.com/search?q=site:linkedin.com/in+"${encodeURIComponent(r.companyName)}"+(owner+OR+"hiring+manager"+OR+HR)`}
+                                    <a href={`https://www.google.com/search?q=site:linkedin.com/company+"${encodeURIComponent(r.companyName)}"`}
                                       target="_blank" rel="noopener noreferrer"
                                       style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", textDecoration: "none", display: "inline-block" }}>
                                       Search LinkedIn ↗
