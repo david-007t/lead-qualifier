@@ -753,54 +753,28 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
 
       const countForBatch = Math.max(3, Math.ceil(indeedCount / batches.length));
 
-      const prompt = `You are a lead researcher for an AI automation agency. Find ${countForBatch} real remote job listings for these roles: ${batch.join(", ")}.
+      const prompt = `Search for companies currently hiring for these remote roles: ${batch.join(", ")}.
 
-Run these searches:
-${searchQueries.map((q, i) => `Search ${i + 1}: ${q}`).join("\n")}
+Use simple search queries like: '[role]' remote job hiring
 
-For each listing found, get:
-- The company name
-- The exact job title as posted
-- Pay rate (hourly or salary as shown)
-- Location (Remote, or Remote + city)
-- How long ago it was posted
-- The direct URL to the job posting
-- The company website, phone, email if visible
-- Approximate company size
-- Their Google review rating and count if you can find it
+For each search result that is an actual job listing, extract:
+- jobTitle: the exact job title from the search result
+- company: the exact company name from the search result
+- pay: salary or hourly rate if shown in the snippet
+- location: Remote or location listed
+- source: which site the listing is on (Indeed, LinkedIn, ZipRecruiter, Glassdoor, etc)
+- postingUrl: the EXACT URL from the search result. Copy it character for character. Do NOT modify it.
+- description: brief description from the search snippet
+- postedDate: when it was posted if visible
 
-After searching, respond with ONLY a JSON array. No markdown, no explanation — just [ ... ].
+RULES:
+1. The postingUrl MUST be the actual URL returned by the search. Do not construct URLs.
+2. The company name MUST appear in the search result snippet or title. If you can't confirm the company name, skip it.
+3. Only include listings that appear to be from the last 30 days.
+4. If a search result is a job board search results page (not a specific listing), skip it.
+5. Return ONLY a JSON array. No other text.
 
-[
-  {
-    "companyName": "Summit HVAC Services",
-    "industry": "HVAC / Home Services",
-    "location": "Remote",
-    "website": "summithvac.com",
-    "phone": "(512) 555-0188",
-    "email": "info@summithvac.com",
-    "jobTitle": "Appointment Setter",
-    "jobPayRate": "$18-22/hr",
-    "annualCost": "$37,440-$45,760",
-    "postingDate": "3 days ago",
-    "jobUrl": "https://indeed.com/viewjob?jk=...",
-    "companySize": "5-20 employees",
-    "googleReviews": { "rating": 4.2, "count": 47 },
-    "automationAngle": "AI booking bot handles 100% of inbound calls 24/7",
-    "automationUseCase": "Inbound call handling, appointment scheduling",
-    "pitchHook": "Saw you're hiring an Appointment Setter at $20/hr — AI does this 24/7 for less",
-    "urgency": "high",
-    "buyingSignals": ["Actively hiring — confirmed budget"],
-    "opportunities": ["AI appointment booking bot"]
-  }
-]
-
-urgency: "high" = posted ≤7 days, "medium" = 8-30 days, "low" = 30+ days.
-Use empty string for fields you cannot find. Return only real listings you found.
-
-ACTIVE LISTINGS ONLY: Only return listings that appear to be currently active — posted within the last 30 days. Skip any listings that show as expired, closed, or have past dates. Include the posting date if visible.
-
-For each job listing, you MUST include a real, working URL to the actual job posting. Search results include URLs — use them. The jobUrl must point to the specific job listing page for that exact company and role. If a search result does not include a clickable URL to the specific listing, do NOT include that listing in your results at all. I would rather get 3 verified listings with real links than 10 listings without links. ONLY return listings where you have a confirmed URL from the search results.`;
+Return fewer results if needed. Quality over quantity.`;
 
       try {
         const response = await fetch("/api/anthropic", {
@@ -809,7 +783,7 @@ For each job listing, you MUST include a real, working URL to the actual job pos
           body: JSON.stringify({
             model: "claude-sonnet-4-20250514",
             max_tokens: 12000,
-            system: "You are a lead research assistant. Search for real job listings using the provided queries. After searching, respond with ONLY a raw JSON array — no markdown, no explanation. Start your response with [ and end with ].",
+            system: "You are a job listing researcher. You use web search to find real job postings. ABSOLUTE RULE: You may ONLY include a listing in your results if the URL came directly from a search result you received. You must NEVER construct, guess, or modify a URL. If a search result gives you a URL, use that exact URL. If the company name in the search result snippet does not match the company name in the URL destination, do NOT include it. Accuracy is everything — returning 2 real listings is better than 10 fake ones.",
             messages: [{ role: "user", content: prompt }],
             tools: [{ type: "web_search_20250305", name: "web_search" }],
           }),
@@ -855,7 +829,51 @@ For each job listing, you MUST include a real, working URL to the actual job pos
         console.log("Parsed successfully:", !!parsed, "Count:", parsed?.length);
 
         if (parsed && Array.isArray(parsed)) {
-          allRaw.push(...parsed);
+          // Filter out any listings where the URL doesn't contain some form of the company name
+          // or doesn't look like a real job listing URL
+          const validated = parsed.filter(listing => {
+            if (!listing.postingUrl || listing.postingUrl.trim() === '') return false;
+
+            // Must be a real URL
+            try { new URL(listing.postingUrl); } catch { return false; }
+
+            // Must be from a known job board or company site
+            const validDomains = ['indeed.com', 'linkedin.com', 'ziprecruiter.com', 'glassdoor.com', 'careerbuilder.com', 'monster.com', 'simplyhired.com'];
+            const url = listing.postingUrl.toLowerCase();
+            const isJobBoard = validDomains.some(d => url.includes(d));
+            const isCompanySite = listing.company && url.includes(listing.company.toLowerCase().split(' ')[0]);
+
+            if (!isJobBoard && !isCompanySite) return false;
+
+            return true;
+          });
+
+          console.log("=== URL VALIDATION ===", "Parsed:", parsed.length, "Validated:", validated.length);
+
+          // Map new prompt field names to the field names the rest of the code expects
+          const normalized = validated.map(l => ({
+            companyName: l.company || l.companyName || "",
+            jobTitle: l.jobTitle || "",
+            jobPayRate: l.pay || l.jobPayRate || "",
+            location: l.location || "",
+            jobUrl: l.postingUrl || l.jobUrl || "",
+            postingDate: l.postedDate || l.postingDate || "",
+            industry: l.source || l.industry || "",
+            website: l.website || "",
+            phone: l.phone || "",
+            email: l.email || "",
+            companySize: l.companySize || "",
+            googleReviews: l.googleReviews || { rating: 0, count: 0 },
+            automationAngle: l.automationAngle || l.description || "",
+            automationUseCase: l.automationUseCase || "",
+            pitchHook: l.pitchHook || "",
+            urgency: l.urgency || "medium",
+            buyingSignals: l.buyingSignals || [],
+            opportunities: l.opportunities || [],
+            annualCost: l.annualCost || "",
+          }));
+
+          allRaw.push(...normalized);
         }
       } catch (err) {
         console.error("Search error for batch:", batch, err);
