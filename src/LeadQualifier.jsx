@@ -793,7 +793,7 @@ Return fewer results if needed. Quality over quantity.`;
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-haiku-4-5-20251001",
             max_tokens: 12000,
             system: "You are a job listing researcher. You use web search to find real job postings. ABSOLUTE RULE: You may ONLY include a listing in your results if the URL came directly from a search result you received. You must NEVER construct, guess, or modify a URL. If a search result gives you a URL, use that exact URL. If the company name in the search result snippet does not match the company name in the URL destination, do NOT include it. Accuracy is everything — returning 2 real listings is better than 10 fake ones.",
             messages: [{ role: "user", content: prompt }],
