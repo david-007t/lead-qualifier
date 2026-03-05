@@ -332,7 +332,6 @@ export default function LeadQualifier() {
   const [queueActions, setQueueActions] = useState({});
 
   // Indeed Leads state
-  const [indeedCity, setIndeedCity] = useState("");
   const [indeedSelectedRoles, setIndeedSelectedRoles] = useState(["appointment_setter", "receptionist", "inbound_call"]);
   const [indeedCustomRole, setIndeedCustomRole] = useState("");
   const [indeedCount, setIndeedCount] = useState(10);
@@ -857,7 +856,6 @@ Respond with ONLY this JSON structure, no markdown:
 
   // ─── INDEED LEAD SEARCH ──────────────────────────────────
   const handleIndeedSearch = async () => {
-    if (!indeedCity.trim()) { showToast("Enter a city or region", "error"); return; }
     const rolesToSearch = [
       ...indeedSelectedRoles.map(id => INDEED_ROLES.find(r => r.id === id)?.label).filter(Boolean),
       ...(indeedCustomRole.trim() ? [indeedCustomRole.trim()] : []),
@@ -868,15 +866,15 @@ Respond with ONLY this JSON structure, no markdown:
     setIndeedError(null);
     setIndeedResults([]);
 
-    const prompt = `You are a lead researcher for Ascend Solutions, an AI automation agency. Search Indeed.com for companies in ${indeedCity.trim()} that are actively hiring for these roles: ${rolesToSearch.join(", ")}.
+    const prompt = `You are a lead researcher for Ascend Solutions, an AI automation agency. Search Indeed.com for companies that are actively hiring for REMOTE positions in these roles: ${rolesToSearch.join(", ")}.
 
 SEARCH STRATEGY:
-1. Search Indeed for each role type in ${indeedCity.trim()}
+1. Search Indeed for each role type with "remote" filter — use queries like "remote appointment setter site:indeed.com", "remote receptionist indeed", etc.
 2. Find ${indeedCount} unique companies (avoid duplicate listings from the same company)
-3. For each company, look up their website, Google reviews, and company info
-4. Note the exact pay rate from the posting — this is their budget signal
+3. For each company, look up their website, Google reviews, and general company info
+4. Note the exact pay rate from the posting — this is their automation budget signal
 
-KEY INSIGHT: Companies hiring for these roles have proven budget and proven need. They're about to spend $35K-$55K/year on a human. AI automation can do the same job 24/7 for a fraction of that.
+KEY INSIGHT: Companies hiring remote workers for these roles have already proven two things: (1) they have budget, (2) the job can be done without someone physically present — which means automation is an easy sell. They're about to spend $35K-$55K/year on a human. AI does the same job 24/7 for a fraction of that.
 
 RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation — just [ ... ].
 
@@ -884,22 +882,22 @@ Each object must have exactly this structure:
 {
   "companyName": "Summit HVAC Services",
   "industry": "HVAC / Home Services",
-  "location": "Austin, TX",
+  "location": "Remote (Company based in Austin, TX)",
   "website": "summithvac.com",
   "phone": "(512) 555-0188",
   "email": "info@summithvac.com",
-  "jobTitle": "Appointment Setter",
+  "jobTitle": "Remote Appointment Setter",
   "jobPayRate": "$18-22/hr",
   "annualCost": "$37,440-$45,760",
   "postingDate": "3 days ago",
   "jobUrl": "https://indeed.com/viewjob?jk=...",
   "companySize": "5-20 employees",
   "googleReviews": { "rating": 4.2, "count": 47 },
-  "automationAngle": "An AI booking bot handles 100% of inbound appointment calls 24/7 — no sick days, instant response, scales without hiring",
+  "automationAngle": "They're already comfortable with remote work — AI automation is an even easier sell. A bot handles 100% of this role 24/7 for less than one month of that salary.",
   "automationUseCase": "Inbound call handling, appointment scheduling, quote follow-up, lead qualification",
-  "pitchHook": "Saw you're hiring an Appointment Setter at $20/hr — we built an AI that does this 24/7 for less than one month of that salary",
+  "pitchHook": "Saw you're hiring a Remote Appointment Setter at $20/hr — we built an AI that does this 24/7 for less than one month of that salary",
   "urgency": "high",
-  "buyingSignals": ["Actively hiring — confirmed budget and need", "Service business with high call volume", "Small team likely overwhelmed with scheduling"],
+  "buyingSignals": ["Actively hiring remote — confirmed budget and need", "Already comfortable with non-in-person solutions", "Small team scaling fast"],
   "opportunities": ["Replace role with AI call answering + booking bot", "Automated quote follow-up sequences", "24/7 coverage vs 9-5 human availability"]
 }
 
@@ -948,7 +946,7 @@ Return ${indeedCount} companies. Use real data from Indeed. Empty string for fie
         id: Date.now() + i + Math.random(),
         companyName: r.companyName || "Unknown Company",
         industry: r.industry || "",
-        location: r.location || indeedCity,
+        location: r.location || "Remote",
         website: r.website || "",
         phone: r.phone || "",
         email: r.email || "",
@@ -2418,25 +2416,19 @@ Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
             <div style={{ animation: "fadeIn 0.3s ease" }}>
               <div style={{ marginBottom: 24 }}>
                 <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>💼 Indeed Lead Hunter</h2>
-                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Find companies posting for roles AI automation can replace. Active job listings = proven budget + confirmed need.</p>
+                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Find companies posting remote listings for roles AI automation can replace. If they're hiring remote, they're already open to non-in-person solutions — automation is an easy next step.</p>
               </div>
 
               <div style={cardStyle}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-                  <div>
-                    <label style={labelStyle}>City or Region *</label>
-                    <input style={inputStyle} value={indeedCity} onChange={e => setIndeedCity(e.target.value)} placeholder="Austin TX, Miami FL..." />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Number of Results</label>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {[5, 10, 15].map(n => (
-                        <button key={n} onClick={() => setIndeedCount(n)}
-                          style={{ padding: "8px 20px", background: indeedCount === n ? t.accent : t.bgHover, border: `1px solid ${indeedCount === n ? t.accent : t.borderLight}`, borderRadius: 8, color: indeedCount === n ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: indeedCount === n ? 700 : 500, transition: "all 0.15s" }}>
-                          {n}
-                        </button>
-                      ))}
-                    </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Number of Results</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[5, 10, 15].map(n => (
+                      <button key={n} onClick={() => setIndeedCount(n)}
+                        style={{ padding: "8px 20px", background: indeedCount === n ? t.accent : t.bgHover, border: `1px solid ${indeedCount === n ? t.accent : t.borderLight}`, borderRadius: 8, color: indeedCount === n ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: indeedCount === n ? 700 : 500, transition: "all 0.15s" }}>
+                        {n}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -2476,7 +2468,7 @@ Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
                   <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Scanning Indeed job postings...</div>
                   <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.6 }}>
                     Roles: {[...indeedSelectedRoles.map(id => INDEED_ROLES.find(r => r.id === id)?.label).filter(Boolean), ...(indeedCustomRole ? [indeedCustomRole] : [])].join(", ")}<br />
-                    Location: {indeedCity}<br />
+                    Searching remote listings on Indeed<br />
                     Building company profiles + automation pitch angles
                   </div>
                 </div>
