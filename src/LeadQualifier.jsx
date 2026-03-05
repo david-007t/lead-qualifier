@@ -152,6 +152,19 @@ const EMPTY_LEAD = {
   timeline: "", description: "", source: "", followUp: "new",
 };
 
+const INDEED_ROLES = [
+  { id: "appointment_setter", label: "Appointment Setter", icon: "📅" },
+  { id: "receptionist", label: "Receptionist", icon: "📞" },
+  { id: "virtual_assistant", label: "Virtual Assistant", icon: "💻" },
+  { id: "inbound_call", label: "Inbound Call Specialist", icon: "☎" },
+  { id: "secretary", label: "Secretary", icon: "📋" },
+  { id: "office_manager", label: "Office Manager", icon: "🏢" },
+  { id: "dispatcher", label: "Dispatcher", icon: "🚗" },
+  { id: "customer_service", label: "Customer Service Rep", icon: "🎧" },
+  { id: "admin_assistant", label: "Admin Assistant", icon: "📁" },
+  { id: "scheduler", label: "Scheduler / Coordinator", icon: "🗓" },
+];
+
 function getDefaultCriteria(industryId) {
   const ind = INDUSTRIES[industryId] || INDUSTRIES.construction;
   return {
@@ -317,6 +330,18 @@ export default function LeadQualifier() {
 
   // Joe's Queue state
   const [queueActions, setQueueActions] = useState({});
+
+  // Indeed Leads state
+  const [indeedCity, setIndeedCity] = useState("");
+  const [indeedSelectedRoles, setIndeedSelectedRoles] = useState(["appointment_setter", "receptionist", "inbound_call"]);
+  const [indeedCustomRole, setIndeedCustomRole] = useState("");
+  const [indeedCount, setIndeedCount] = useState(10);
+  const [indeedResults, setIndeedResults] = useState([]);
+  const [indeedLoading, setIndeedLoading] = useState(false);
+  const [indeedError, setIndeedError] = useState(null);
+  const [indeedEmailDrafts, setIndeedEmailDrafts] = useState({});
+  const [draftingIndeedEmail, setDraftingIndeedEmail] = useState(null);
+  const [indeedQueueActions, setIndeedQueueActions] = useState({});
 
   // Outreach state
   const [outreachProspects, setOutreachProspects] = useState([]);
@@ -830,6 +855,170 @@ Respond with ONLY this JSON structure, no markdown:
     setGeneratingPlaybook(null);
   };
 
+  // ─── INDEED LEAD SEARCH ──────────────────────────────────
+  const handleIndeedSearch = async () => {
+    if (!indeedCity.trim()) { showToast("Enter a city or region", "error"); return; }
+    const rolesToSearch = [
+      ...indeedSelectedRoles.map(id => INDEED_ROLES.find(r => r.id === id)?.label).filter(Boolean),
+      ...(indeedCustomRole.trim() ? [indeedCustomRole.trim()] : []),
+    ];
+    if (rolesToSearch.length === 0) { showToast("Select at least one role to search for", "error"); return; }
+
+    setIndeedLoading(true);
+    setIndeedError(null);
+    setIndeedResults([]);
+
+    const prompt = `You are a lead researcher for Ascend Solutions, an AI automation agency. Search Indeed.com for companies in ${indeedCity.trim()} that are actively hiring for these roles: ${rolesToSearch.join(", ")}.
+
+SEARCH STRATEGY:
+1. Search Indeed for each role type in ${indeedCity.trim()}
+2. Find ${indeedCount} unique companies (avoid duplicate listings from the same company)
+3. For each company, look up their website, Google reviews, and company info
+4. Note the exact pay rate from the posting — this is their budget signal
+
+KEY INSIGHT: Companies hiring for these roles have proven budget and proven need. They're about to spend $35K-$55K/year on a human. AI automation can do the same job 24/7 for a fraction of that.
+
+RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation — just [ ... ].
+
+Each object must have exactly this structure:
+{
+  "companyName": "Summit HVAC Services",
+  "industry": "HVAC / Home Services",
+  "location": "Austin, TX",
+  "website": "summithvac.com",
+  "phone": "(512) 555-0188",
+  "email": "info@summithvac.com",
+  "jobTitle": "Appointment Setter",
+  "jobPayRate": "$18-22/hr",
+  "annualCost": "$37,440-$45,760",
+  "postingDate": "3 days ago",
+  "jobUrl": "https://indeed.com/viewjob?jk=...",
+  "companySize": "5-20 employees",
+  "googleReviews": { "rating": 4.2, "count": 47 },
+  "automationAngle": "An AI booking bot handles 100% of inbound appointment calls 24/7 — no sick days, instant response, scales without hiring",
+  "automationUseCase": "Inbound call handling, appointment scheduling, quote follow-up, lead qualification",
+  "pitchHook": "Saw you're hiring an Appointment Setter at $20/hr — we built an AI that does this 24/7 for less than one month of that salary",
+  "urgency": "high",
+  "buyingSignals": ["Actively hiring — confirmed budget and need", "Service business with high call volume", "Small team likely overwhelmed with scheduling"],
+  "opportunities": ["Replace role with AI call answering + booking bot", "Automated quote follow-up sequences", "24/7 coverage vs 9-5 human availability"]
+}
+
+urgency: "high" = posted within 7 days, "medium" = 7-30 days, "low" = 30+ days.
+Return ${indeedCount} companies. Use real data from Indeed. Empty string for fields you can't find.`;
+
+    try {
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 12000,
+          system: "You are a lead research assistant for an AI automation agency. Search Indeed and company websites for real businesses actively hiring for roles AI automation could replace. Respond with ONLY a raw JSON array — no markdown, no explanation, just [ ... ].",
+          messages: [{ role: "user", content: prompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) { setIndeedError(data.error.message || "API error. Please try again."); setIndeedLoading(false); return; }
+
+      const textParts = [];
+      (data.content || []).forEach(block => { if (block.type === "text" && block.text) textParts.push(block.text); });
+      const fullText = textParts.join("\n");
+
+      let parsed = null;
+      const fenceMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+      if (fenceMatch) { try { parsed = JSON.parse(fenceMatch[1]); } catch {} }
+      if (!parsed) {
+        const greedyMatch = fullText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+        if (greedyMatch) {
+          try { parsed = JSON.parse(greedyMatch[0]); } catch {
+            try { parsed = JSON.parse(greedyMatch[0].replace(/,\s*(?=[}\]])/g, "")); } catch {}
+          }
+        }
+      }
+
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+        setIndeedError("No listings found. Try a different city or role combination.");
+        setIndeedLoading(false);
+        return;
+      }
+
+      const results = parsed.map((r, i) => ({
+        id: Date.now() + i + Math.random(),
+        companyName: r.companyName || "Unknown Company",
+        industry: r.industry || "",
+        location: r.location || indeedCity,
+        website: r.website || "",
+        phone: r.phone || "",
+        email: r.email || "",
+        jobTitle: r.jobTitle || "",
+        jobPayRate: r.jobPayRate || "",
+        annualCost: r.annualCost || "",
+        postingDate: r.postingDate || "",
+        jobUrl: r.jobUrl || "",
+        companySize: r.companySize || "",
+        googleReviews: r.googleReviews || { rating: 0, count: 0 },
+        automationAngle: r.automationAngle || "",
+        automationUseCase: r.automationUseCase || "",
+        pitchHook: r.pitchHook || "",
+        urgency: r.urgency || "medium",
+        buyingSignals: r.buyingSignals || [],
+        opportunities: r.opportunities || [],
+      }));
+
+      setIndeedResults(results);
+      showToast(`Found ${results.length} companies hiring`);
+    } catch (err) {
+      console.error("Indeed search error:", err);
+      setIndeedError("Search failed — please try again.");
+    }
+    setIndeedLoading(false);
+  };
+
+  // ─── INDEED EMAIL DRAFT ───────────────────────────────────
+  const handleIndeedDraftEmail = async (result) => {
+    setDraftingIndeedEmail(result.id);
+    try {
+      const prompt = `Write a short, punchy cold outreach message to ${result.companyName}, a ${result.industry} business in ${result.location} that posted for a ${result.jobTitle} on Indeed at ${result.jobPayRate}.
+
+You represent Ascend Solutions, an AI automation agency.
+
+The angle: They're about to spend ${result.annualCost}/year on a human for ${result.jobTitle} work. You have AI automation that handles this 24/7 for a fraction of the cost.
+
+Pitch hook: "${result.pitchHook}"
+Automation use case: ${result.automationUseCase}
+
+Framework:
+- Open by referencing their specific job posting (shows you did research)
+- Flip it: position automation as the smarter alternative to hiring
+- One concrete advantage (24/7, instant response, scales, no salary/benefits)
+- CTA: Low-friction — "worth a quick 10-min call?" or "want to see a demo?"
+
+Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 500,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) { showToast("Failed to generate outreach", "error"); setDraftingIndeedEmail(null); return; }
+      const emailText = (data.content || []).find(b => b.type === "text")?.text || "";
+      setIndeedEmailDrafts(prev => ({ ...prev, [result.id]: emailText }));
+      showToast("Outreach draft ready");
+    } catch (err) {
+      console.error("Indeed email draft error:", err);
+      showToast("Failed to generate outreach", "error");
+    }
+    setDraftingIndeedEmail(null);
+  };
+
   const handleClearAll = () => {
     setConfirmAction({
       title: "Clear All Leads",
@@ -843,7 +1032,7 @@ Respond with ONLY this JSON structure, no markdown:
       title: "Reset Everything",
       message: "This will delete all leads, criteria, and settings. Start fresh?",
       onConfirm: async () => {
-        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setProspects([]); setEmailDrafts({}); setQueueActions({}); setOutreachProspects([]); setOutreachDrafts({}); setOutreachStatuses({}); setEmailConfig({ host: "", port: 587, user: "", pass: "", fromName: "" }); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
+        setLeads([]); setCriteria(getDefaultCriteria("construction")); setCompanyName(""); setIndustry("construction"); setProspects([]); setEmailDrafts({}); setQueueActions({}); setIndeedResults([]); setIndeedEmailDrafts({}); setIndeedQueueActions({}); setOutreachProspects([]); setOutreachDrafts({}); setOutreachStatuses({}); setEmailConfig({ host: "", port: 587, user: "", pass: "", fromName: "" }); setSetupComplete(false); setSetupStep(0); setTab("dashboard");
         try { localStorage.removeItem(SK.leads); localStorage.removeItem(SK.criteria); localStorage.removeItem(SK.settings); localStorage.removeItem(SK.outreachProspects); localStorage.removeItem(SK.outreachDrafts); localStorage.removeItem(SK.emailConfig); } catch {}
         setConfirmAction(null); showToast("App reset complete");
       },
@@ -1266,7 +1455,7 @@ Respond with ONLY this JSON structure, no markdown:
         {/* Tabs */}
         <div style={{ borderBottom: `1px solid ${t.border}` }}>
           <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 32px", display: "flex", gap: 2, overflowX: "auto" }} className="tab-bar">
-            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "queue", label: "My Queue" }, { id: "outreach", label: "Cold Outreach", count: outreachProspects.length || undefined }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
+            {[{ id: "dashboard", label: "Dashboard" }, { id: "prospects", label: "Prospects" }, { id: "indeed", label: "Indeed Leads" }, { id: "queue", label: "My Queue" }, { id: "outreach", label: "Cold Outreach", count: outreachProspects.length || undefined }, { id: "leads", label: "Leads", count: leads.length }, { id: "add", label: "+ Add" }, { id: "settings", label: "Criteria" }].map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)} style={{ padding: "12px 20px", background: tab === tb.id ? t.accent : "transparent", color: tab === tb.id ? "#0c0a09" : t.textMuted, border: "none", borderBottom: tab === tb.id ? `3px solid ${t.accent}` : "3px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: tab === tb.id ? 700 : 500, letterSpacing: "0.02em", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
                 {tb.label}
                 {tb.count !== undefined && <span style={{ background: tab === tb.id ? "#00000033" : t.bgHover, color: tab === tb.id ? "#0c0a09" : t.textDim, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{tb.count}</span>}
@@ -2221,6 +2410,213 @@ Respond with ONLY this JSON structure, no markdown:
                   </>
                 );
               })()}
+            </div>
+          )}
+
+          {/* ════════════ INDEED LEADS ════════════ */}
+          {tab === "indeed" && (
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
+              <div style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Outfit', sans-serif", marginBottom: 6 }}>💼 Indeed Lead Hunter</h2>
+                <p style={{ color: t.textDim, fontSize: 14, lineHeight: 1.5 }}>Find companies posting for roles AI automation can replace. Active job listings = proven budget + confirmed need.</p>
+              </div>
+
+              <div style={cardStyle}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                  <div>
+                    <label style={labelStyle}>City or Region *</label>
+                    <input style={inputStyle} value={indeedCity} onChange={e => setIndeedCity(e.target.value)} placeholder="Austin TX, Miami FL..." />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Number of Results</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[5, 10, 15].map(n => (
+                        <button key={n} onClick={() => setIndeedCount(n)}
+                          style={{ padding: "8px 20px", background: indeedCount === n ? t.accent : t.bgHover, border: `1px solid ${indeedCount === n ? t.accent : t.borderLight}`, borderRadius: 8, color: indeedCount === n ? "#0c0a09" : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: indeedCount === n ? 700 : 500, transition: "all 0.15s" }}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Roles to Hunt *</label>
+                  <p style={{ fontSize: 12, color: t.textFaint, marginBottom: 10 }}>Companies posting these roles have proven they need the function — and they have budget for it.</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 8 }}>
+                    {INDEED_ROLES.map(role => {
+                      const active = indeedSelectedRoles.includes(role.id);
+                      return (
+                        <button key={role.id}
+                          onClick={() => setIndeedSelectedRoles(prev => active ? prev.filter(r => r !== role.id) : [...prev, role.id])}
+                          style={{ padding: "10px 14px", background: active ? t.accent + "1a" : t.bgHover, border: `1px solid ${active ? t.accent : t.borderLight}`, borderRadius: 8, color: active ? t.accent : t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: active ? 700 : 500, fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span>{role.icon}</span>
+                          <span style={{ flex: 1 }}>{role.label}</span>
+                          {active && <span style={{ fontSize: 11 }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Custom Role (optional)</label>
+                  <input style={inputStyle} value={indeedCustomRole} onChange={e => setIndeedCustomRole(e.target.value)} placeholder="e.g. Lead Qualifier, Cold Caller, Follow-up Specialist..." />
+                </div>
+
+                <button onClick={handleIndeedSearch} disabled={indeedLoading}
+                  style={{ ...btnPrimary, padding: "12px 32px", fontSize: 15, opacity: indeedLoading ? 0.6 : 1, cursor: indeedLoading ? "wait" : "pointer" }}>
+                  {indeedLoading ? "Hunting..." : "🎯 Hunt Indeed Leads"}
+                </button>
+              </div>
+
+              {indeedLoading && (
+                <div style={{ ...cardStyle, textAlign: "center", padding: "48px 24px" }}>
+                  <div style={{ fontSize: 36, marginBottom: 16, animation: "pulse 1.2s infinite" }}>💼</div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Scanning Indeed job postings...</div>
+                  <div style={{ fontSize: 13, color: t.textDim, maxWidth: 500, margin: "0 auto", lineHeight: 1.6 }}>
+                    Roles: {[...indeedSelectedRoles.map(id => INDEED_ROLES.find(r => r.id === id)?.label).filter(Boolean), ...(indeedCustomRole ? [indeedCustomRole] : [])].join(", ")}<br />
+                    Location: {indeedCity}<br />
+                    Building company profiles + automation pitch angles
+                  </div>
+                </div>
+              )}
+
+              {indeedError && (
+                <div style={{ ...cardStyle, background: t.redBg, border: `1px solid ${t.redBorder}`, marginTop: 16 }}>
+                  <span style={{ fontSize: 20 }}>⚠</span> {indeedError}
+                </div>
+              )}
+
+              {indeedResults.length > 0 && !indeedLoading && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+                    <div>
+                      <span style={{ fontSize: 15, fontWeight: 700 }}>Found {indeedResults.length} companies hiring</span>
+                      <span style={{ fontSize: 12, color: t.textDim, marginLeft: 12 }}>
+                        {indeedResults.filter(r => r.urgency === "high").length} hot · {indeedResults.filter(r => r.urgency === "medium").length} active
+                      </span>
+                    </div>
+                    <button onClick={() => {
+                      const csv = ["Company,Industry,Location,Job Title,Pay Rate,Annual Cost,Website,Phone,Email,Urgency,Automation Angle,Pitch Hook", ...indeedResults.map(r =>
+                        `"${r.companyName}","${r.industry}","${r.location}","${r.jobTitle}","${r.jobPayRate}","${r.annualCost}","${r.website}","${r.phone}","${r.email}","${r.urgency}","${r.automationAngle}","${r.pitchHook}"`
+                      )].join("\n");
+                      const blob = new Blob([csv], { type: "text/csv" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a"); a.href = url; a.download = "indeed_leads.csv"; a.click();
+                    }} style={{ ...btnSecondary, fontSize: 12 }}>↓ Export CSV</button>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 16 }}>
+                    {indeedResults.map(r => {
+                      const urgencyColor = r.urgency === "high" ? t.green : r.urgency === "medium" ? t.accent : t.textDim;
+                      const urgencyBg = r.urgency === "high" ? t.greenBg : r.urgency === "medium" ? t.accent + "15" : t.bgHover;
+                      const urgencyLabel = r.urgency === "high" ? "🔥 Hot Listing" : r.urgency === "medium" ? "⚡ Active" : "📋 Listed";
+                      const skipped = indeedQueueActions[r.id] === "skip";
+                      return (
+                        <div key={r.id} style={{ ...cardStyle, borderLeft: `4px solid ${urgencyColor}`, opacity: skipped ? 0.4 : 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+                                <h3 style={{ fontSize: 18, fontWeight: 700 }}>{r.companyName}</h3>
+                                <span style={{ padding: "4px 10px", background: urgencyBg, color: urgencyColor, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{urgencyLabel}</span>
+                                {indeedQueueActions[r.id] === "contacted" && <span style={{ padding: "4px 10px", background: t.accent + "22", color: t.accent, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✓ Contacted</span>}
+                                {indeedQueueActions[r.id] === "replied" && <span style={{ padding: "4px 10px", background: t.greenBg, color: t.green, borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✓ Replied</span>}
+                              </div>
+                              {r.industry && <div style={{ fontSize: 13, color: t.textMuted }}>{r.industry} · {r.location}</div>}
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: t.accent }}>{r.jobPayRate}</div>
+                              {r.annualCost && <div style={{ fontSize: 11, color: t.textDim }}>{r.annualCost}/yr budget signal</div>}
+                            </div>
+                          </div>
+
+                          <div style={{ padding: "10px 14px", background: t.bgHover, borderRadius: 8, marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                            <div>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Indeed Posting</div>
+                              <div style={{ fontSize: 14, fontWeight: 700 }}>📋 {r.jobTitle}</div>
+                              {r.postingDate && <div style={{ fontSize: 11, color: t.textMuted }}>Posted {r.postingDate}</div>}
+                            </div>
+                            {r.companySize && <div style={{ fontSize: 12, color: t.textMuted }}>👥 {r.companySize}</div>}
+                          </div>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 14 }}>
+                            <div>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Contact Info</div>
+                              {r.phone && <div style={{ fontSize: 13, marginBottom: 4 }}>☎ {r.phone}</div>}
+                              {r.email && <div style={{ fontSize: 13, marginBottom: 4 }}>✉ {r.email}</div>}
+                              {r.website && <div style={{ fontSize: 13 }}>🌐 {r.website}</div>}
+                              {!r.phone && !r.email && !r.website && <div style={{ fontSize: 12, color: t.textFaint }}>No contact info found</div>}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Business Info</div>
+                              {r.googleReviews.count > 0 && <div style={{ fontSize: 13, marginBottom: 4 }}>⭐ {r.googleReviews.rating} ({r.googleReviews.count} reviews)</div>}
+                              {r.companySize && <div style={{ fontSize: 13 }}>👥 {r.companySize}</div>}
+                            </div>
+                          </div>
+
+                          {r.automationAngle && (
+                            <div style={{ padding: "12px 14px", background: t.accent + "0f", border: `1px solid ${t.accent}33`, borderRadius: 8, marginBottom: 14 }}>
+                              <div style={{ fontSize: 11, color: t.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, fontWeight: 700 }}>🤖 Automation Angle</div>
+                              <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.automationAngle}</div>
+                            </div>
+                          )}
+
+                          {r.buyingSignals && r.buyingSignals.length > 0 && (
+                            <div style={{ marginBottom: 14 }}>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>🔥 Why They Need This Now</div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {r.buyingSignals.map((sig, i) => (
+                                  <div key={i} style={{ padding: "6px 10px", background: t.bgHover, borderLeft: `3px solid ${t.accent}`, borderRadius: 4, fontSize: 12 }}>{sig}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {r.opportunities && r.opportunities.length > 0 && (
+                            <div style={{ marginBottom: 14 }}>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>💡 What to Pitch</div>
+                              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: t.textMuted }}>
+                                {r.opportunities.map((opp, i) => <li key={i} style={{ marginBottom: 2 }}>{opp}</li>)}
+                              </ul>
+                            </div>
+                          )}
+
+                          <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
+                            <button onClick={() => handleIndeedDraftEmail(r)} disabled={draftingIndeedEmail === r.id}
+                              style={{ ...btnPrimary, fontSize: 12, padding: "8px 16px", opacity: draftingIndeedEmail === r.id ? 0.6 : 1 }}>
+                              {draftingIndeedEmail === r.id ? "Drafting..." : indeedEmailDrafts[r.id] ? "Re-draft Outreach" : "Draft Outreach"}
+                            </button>
+                            <button onClick={() => setIndeedQueueActions(prev => ({ ...prev, [r.id]: prev[r.id] === "contacted" ? undefined : "contacted" }))}
+                              style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: indeedQueueActions[r.id] === "contacted" ? t.accent + "22" : t.bgHover, color: indeedQueueActions[r.id] === "contacted" ? t.accent : t.textMuted }}>
+                              {indeedQueueActions[r.id] === "contacted" ? "✓ Contacted" : "Mark Contacted"}
+                            </button>
+                            <button onClick={() => setIndeedQueueActions(prev => ({ ...prev, [r.id]: prev[r.id] === "replied" ? undefined : "replied" }))}
+                              style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", background: indeedQueueActions[r.id] === "replied" ? t.green + "22" : t.bgHover, color: indeedQueueActions[r.id] === "replied" ? t.green : t.textMuted }}>
+                              {indeedQueueActions[r.id] === "replied" ? "✓ Got Reply" : "Mark Replied"}
+                            </button>
+                            <button onClick={() => setIndeedQueueActions(prev => ({ ...prev, [r.id]: "skip" }))}
+                              style={{ ...btnSecondary, fontSize: 12, padding: "8px 16px", color: t.textFaint }}>
+                              Skip
+                            </button>
+                          </div>
+
+                          {indeedEmailDrafts[r.id] && (
+                            <div style={{ marginTop: 12, padding: 16, background: t.bgAlt, borderRadius: 8, border: `1px solid ${t.borderLight}` }}>
+                              <div style={{ fontSize: 11, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📧 Outreach Draft</div>
+                              <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 12, whiteSpace: "pre-wrap" }}>{indeedEmailDrafts[r.id]}</div>
+                              <button onClick={() => { navigator.clipboard.writeText(indeedEmailDrafts[r.id]); showToast("Copied to clipboard"); }}
+                                style={{ ...btnPrimary, fontSize: 12, padding: "6px 16px" }}>
+                                Copy to Clipboard
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
