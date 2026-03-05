@@ -763,14 +763,16 @@ For each search result that is an actual job listing, extract:
 - pay: salary or hourly rate if shown in the snippet
 - location: Remote or location listed
 - source: which site the listing is on (Indeed, LinkedIn, ZipRecruiter, Glassdoor, etc)
+- postingUrl: the EXACT URL from the search result. Copy it character for character. Do NOT modify it.
 - description: brief description from the search snippet
 - postedDate: when it was posted if visible
 
 RULES:
-1. The company name MUST appear in the search result snippet or title. If you can't confirm the company name, skip it.
-2. Only include listings that appear to be from the last 30 days.
-3. If a search result is a job board search results page (not a specific listing), skip it.
-4. Return ONLY a JSON array. No other text.
+1. The postingUrl MUST be the actual URL returned by the search. Do not construct URLs.
+2. The company name MUST appear in the search result snippet or title. If you can't confirm the company name, skip it.
+3. Only include listings that appear to be from the last 30 days.
+4. If a search result is a job board search results page (not a specific listing), skip it.
+5. Return ONLY a JSON array. No other text.
 
 Return fewer results if needed. Quality over quantity.`;
 
@@ -781,7 +783,7 @@ Return fewer results if needed. Quality over quantity.`;
           body: JSON.stringify({
             model: "claude-sonnet-4-20250514",
             max_tokens: 12000,
-            system: "You are a job listing researcher. You use web search to find real job postings. Focus on extracting accurate company names, job titles, pay rates, and descriptions from search results. Return ONLY a raw JSON array — no markdown, no explanation. Start your response with [ and end with ].",
+            system: "You are a job listing researcher. You use web search to find real job postings. ABSOLUTE RULE: You may ONLY include a listing in your results if the URL came directly from a search result you received. You must NEVER construct, guess, or modify a URL. If a search result gives you a URL, use that exact URL. If the company name in the search result snippet does not match the company name in the URL destination, do NOT include it. Accuracy is everything — returning 2 real listings is better than 10 fake ones.",
             messages: [{ role: "user", content: prompt }],
             tools: [{ type: "web_search_20250305", name: "web_search" }],
           }),
@@ -827,38 +829,49 @@ Return fewer results if needed. Quality over quantity.`;
         console.log("Parsed successfully:", !!parsed, "Count:", parsed?.length);
 
         if (parsed && Array.isArray(parsed)) {
-          // Map prompt field names to the field names the rest of the code expects,
-          // and generate client-side verify links (no AI URLs involved)
-          const normalized = parsed.map(l => {
-            const companyEncoded = encodeURIComponent(l.company || l.companyName || "");
-            const roleEncoded = encodeURIComponent(l.jobTitle || "");
-            return {
-              companyName: l.company || l.companyName || "",
-              jobTitle: l.jobTitle || "",
-              jobPayRate: l.pay || l.jobPayRate || "",
-              location: l.location || "",
-              jobUrl: "",
-              postingDate: l.postedDate || l.postingDate || "",
-              industry: l.source || l.industry || "",
-              website: l.website || "",
-              phone: l.phone || "",
-              email: l.email || "",
-              companySize: l.companySize || "",
-              googleReviews: l.googleReviews || { rating: 0, count: 0 },
-              automationAngle: l.automationAngle || l.description || "",
-              automationUseCase: l.automationUseCase || "",
-              pitchHook: l.pitchHook || "",
-              urgency: l.urgency || "medium",
-              buyingSignals: l.buyingSignals || [],
-              opportunities: l.opportunities || [],
-              annualCost: l.annualCost || "",
-              verifyLinks: {
-                indeed: `https://www.indeed.com/jobs?q=${roleEncoded}+${companyEncoded}&l=Remote`,
-                linkedin: `https://www.linkedin.com/jobs/search/?keywords=${roleEncoded}+${companyEncoded}&location=Remote`,
-                google: `https://www.google.com/search?q=${companyEncoded}+${roleEncoded}+job+posting`,
-              },
-            };
+          // Filter out any listings where the URL doesn't contain some form of the company name
+          // or doesn't look like a real job listing URL
+          const validated = parsed.filter(listing => {
+            if (!listing.postingUrl || listing.postingUrl.trim() === '') return false;
+
+            // Must be a real URL
+            try { new URL(listing.postingUrl); } catch { return false; }
+
+            // Must be from a known job board or company site
+            const validDomains = ['indeed.com', 'linkedin.com', 'ziprecruiter.com', 'glassdoor.com', 'careerbuilder.com', 'monster.com', 'simplyhired.com'];
+            const url = listing.postingUrl.toLowerCase();
+            const isJobBoard = validDomains.some(d => url.includes(d));
+            const isCompanySite = listing.company && url.includes(listing.company.toLowerCase().split(' ')[0]);
+
+            if (!isJobBoard && !isCompanySite) return false;
+
+            return true;
           });
+
+          console.log("=== URL VALIDATION ===", "Parsed:", parsed.length, "Validated:", validated.length);
+
+          // Map new prompt field names to the field names the rest of the code expects
+          const normalized = validated.map(l => ({
+            companyName: l.company || l.companyName || "",
+            jobTitle: l.jobTitle || "",
+            jobPayRate: l.pay || l.jobPayRate || "",
+            location: l.location || "",
+            jobUrl: l.postingUrl || l.jobUrl || "",
+            postingDate: l.postedDate || l.postingDate || "",
+            industry: l.source || l.industry || "",
+            website: l.website || "",
+            phone: l.phone || "",
+            email: l.email || "",
+            companySize: l.companySize || "",
+            googleReviews: l.googleReviews || { rating: 0, count: 0 },
+            automationAngle: l.automationAngle || l.description || "",
+            automationUseCase: l.automationUseCase || "",
+            pitchHook: l.pitchHook || "",
+            urgency: l.urgency || "medium",
+            buyingSignals: l.buyingSignals || [],
+            opportunities: l.opportunities || [],
+            annualCost: l.annualCost || "",
+          }));
 
           allRaw.push(...normalized);
         }
@@ -882,7 +895,10 @@ Return fewer results if needed. Quality over quantity.`;
       return true;
     });
 
-    // Build pipeline lead map — normalizedCompany → array of followUp statuses
+    // Fix 1: Filter out listings with no confirmed job URL
+    const withLinks = dedupedRaw.filter(r => r.jobUrl && r.jobUrl.trim() !== "");
+
+    // Fix 4: Build pipeline lead map — normalizedCompany → array of followUp statuses
     const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
     const pipelineLeadMap = {};
     leads.forEach(l => {
@@ -891,7 +907,7 @@ Return fewer results if needed. Quality over quantity.`;
       pipelineLeadMap[norm].push(l.followUp || "new");
     });
 
-    const results = dedupedRaw.map((r, i) => {
+    const results = withLinks.map((r, i) => {
       const normCompany = normalizeName(r.companyName);
       const statuses = pipelineLeadMap[normCompany] || [];
       const isActedOn = statuses.some(s => s === "contacted" || s === "replied");
@@ -917,7 +933,6 @@ Return fewer results if needed. Quality over quantity.`;
         urgency: r.urgency || "medium",
         buyingSignals: r.buyingSignals || [],
         opportunities: r.opportunities || [],
-        verifyLinks: r.verifyLinks || null,
         // Only hide if already acted on (contacted/replied); new pipeline leads still show
         skipRender: isActedOn,
         pipelineTag: isInPipeline && !isActedOn ? "✓ Already in Pipeline" : null,
@@ -2460,20 +2475,15 @@ Respond with ONLY a JSON object:
                                     <span style={{ fontSize: 10, padding: "2px 8px", background: "#34d39922", color: "#34d399", borderRadius: 12, fontWeight: 700 }}>Fastest</span>
                                   </div>
                                   <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Apply through the job posting with a pitch instead of a resume.</p>
-                                  {r.verifyLinks && (
-                                    <div style={{ marginBottom: 10 }}>
-                                      <div style={{ fontSize: 11, color: t.textDim, marginBottom: 6 }}>Verify this listing:</div>
-                                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                        <a href={r.verifyLinks.indeed} target="_blank" rel="noopener noreferrer"
-                                          style={{ fontSize: 11, padding: "4px 10px", background: t.bgHover, color: t.textMuted, border: `1px solid ${t.border}`, borderRadius: 20, textDecoration: "none", display: "inline-block" }}>🔍 Indeed</a>
-                                        <a href={r.verifyLinks.linkedin} target="_blank" rel="noopener noreferrer"
-                                          style={{ fontSize: 11, padding: "4px 10px", background: t.bgHover, color: t.textMuted, border: `1px solid ${t.border}`, borderRadius: 20, textDecoration: "none", display: "inline-block" }}>💼 LinkedIn</a>
-                                        <a href={r.verifyLinks.google} target="_blank" rel="noopener noreferrer"
-                                          style={{ fontSize: 11, padding: "4px 10px", background: t.bgHover, color: t.textMuted, border: `1px solid ${t.border}`, borderRadius: 20, textDecoration: "none", display: "inline-block" }}>🌐 Google</a>
-                                      </div>
-                                    </div>
-                                  )}
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+                                    {r.jobUrl ? (
+                                      <a href={r.jobUrl} target="_blank" rel="noopener noreferrer"
+                                        style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", textDecoration: "none", display: "inline-block" }}>
+                                        Open Listing ↗
+                                      </a>
+                                    ) : (
+                                      <span style={{ fontSize: 12, color: t.textFaint, fontStyle: "italic" }}>No direct link found</span>
+                                    )}
                                     <button onClick={() => handleIndeedGenerateApplyPitch(r)} disabled={generatingApplyPitch === r.id}
                                       style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#34d399", opacity: generatingApplyPitch === r.id ? 0.6 : 1 }}>
                                       {generatingApplyPitch === r.id ? "Generating..." : indeedApplyPitch[r.id] ? "Re-generate" : "Generate Pitch"}
