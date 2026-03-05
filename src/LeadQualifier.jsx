@@ -866,43 +866,53 @@ Respond with ONLY this JSON structure, no markdown:
     setIndeedError(null);
     setIndeedResults([]);
 
-    const prompt = `You are a lead researcher for Ascend Solutions, an AI automation agency. Search Indeed.com for companies that are actively hiring for REMOTE positions in these roles: ${rolesToSearch.join(", ")}.
+    const searchQueries = rolesToSearch.slice(0, 4).map(role =>
+      `remote "${role}" job hiring 2025`
+    );
 
-SEARCH STRATEGY:
-1. Search Indeed for each role type with "remote" filter — use queries like "remote appointment setter site:indeed.com", "remote receptionist indeed", etc.
-2. Find ${indeedCount} unique companies (avoid duplicate listings from the same company)
-3. For each company, look up their website, Google reviews, and general company info
-4. Note the exact pay rate from the posting — this is their automation budget signal
+    const prompt = `You are a lead researcher for an AI automation agency. Find ${indeedCount} real companies currently hiring for these remote roles: ${rolesToSearch.join(", ")}.
 
-KEY INSIGHT: Companies hiring remote workers for these roles have already proven two things: (1) they have budget, (2) the job can be done without someone physically present — which means automation is an easy sell. They're about to spend $35K-$55K/year on a human. AI does the same job 24/7 for a fraction of that.
+SEARCH INSTRUCTIONS — run each of these searches:
+${searchQueries.map((q, i) => `Search ${i + 1}: ${q}`).join("\n")}
+Search ${searchQueries.length + 1}: remote "${rolesToSearch[0]}" job opening company
 
-RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation — just [ ... ].
+Use job boards that show up in search results — LinkedIn Jobs, ZipRecruiter, Glassdoor, Indeed, company career pages. Do NOT try to navigate directly to indeed.com — search Google for listings instead.
 
-Each object must have exactly this structure:
-{
-  "companyName": "Summit HVAC Services",
-  "industry": "HVAC / Home Services",
-  "location": "Remote (Company based in Austin, TX)",
-  "website": "summithvac.com",
-  "phone": "(512) 555-0188",
-  "email": "info@summithvac.com",
-  "jobTitle": "Remote Appointment Setter",
-  "jobPayRate": "$18-22/hr",
-  "annualCost": "$37,440-$45,760",
-  "postingDate": "3 days ago",
-  "jobUrl": "https://indeed.com/viewjob?jk=...",
-  "companySize": "5-20 employees",
-  "googleReviews": { "rating": 4.2, "count": 47 },
-  "automationAngle": "They're already comfortable with remote work — AI automation is an even easier sell. A bot handles 100% of this role 24/7 for less than one month of that salary.",
-  "automationUseCase": "Inbound call handling, appointment scheduling, quote follow-up, lead qualification",
-  "pitchHook": "Saw you're hiring a Remote Appointment Setter at $20/hr — we built an AI that does this 24/7 for less than one month of that salary",
-  "urgency": "high",
-  "buyingSignals": ["Actively hiring remote — confirmed budget and need", "Already comfortable with non-in-person solutions", "Small team scaling fast"],
-  "opportunities": ["Replace role with AI call answering + booking bot", "Automated quote follow-up sequences", "24/7 coverage vs 9-5 human availability"]
-}
+For each company found:
+1. Get the company name, what role they're hiring for, and the pay rate
+2. Search for their company website to get phone/email
+3. Note the industry and approximate company size
 
-urgency: "high" = posted within 7 days, "medium" = 7-30 days, "low" = 30+ days.
-Return ${indeedCount} companies. Use real data from Indeed. Empty string for fields you can't find.`;
+KEY CONTEXT: These companies are about to pay $35K-55K/year for a human to do admin/scheduling work. AI automation does the same thing 24/7 for a fraction of that. Companies hiring REMOTE for these roles are especially good prospects — they're already proven the job doesn't need to be in-person.
+
+After all searches, output ONLY a JSON array — no intro text, no markdown fences, just the raw array:
+
+[
+  {
+    "companyName": "Peak Roofing Solutions",
+    "industry": "Roofing / Home Services",
+    "location": "Remote (based in Denver, CO)",
+    "website": "peakroofing.com",
+    "phone": "(303) 555-0144",
+    "email": "",
+    "jobTitle": "Remote Appointment Setter",
+    "jobPayRate": "$18/hr",
+    "annualCost": "$37,440/yr",
+    "postingDate": "2 days ago",
+    "jobUrl": "https://www.linkedin.com/jobs/view/...",
+    "companySize": "10-25 employees",
+    "googleReviews": { "rating": 4.5, "count": 38 },
+    "automationAngle": "Already hiring remote — a bot does this 24/7 for less than one month of that salary with zero overhead",
+    "automationUseCase": "Inbound lead qualification, appointment booking, follow-up sequences",
+    "pitchHook": "Saw you're hiring a Remote Appointment Setter at $18/hr — we have AI that does this around the clock for a fraction of that",
+    "urgency": "high",
+    "buyingSignals": ["Active remote job posting — confirmed budget", "Service business with high inbound volume", "Open to remote work = open to automation"],
+    "opportunities": ["AI appointment booking bot", "Automated follow-up sequences", "Lead qualification without hiring"]
+  }
+]
+
+urgency: "high" if posted ≤7 days, "medium" if 8-30 days, "low" if older.
+Return ${indeedCount} unique companies from real job listings you found. Empty string for any field you cannot find.`;
 
     try {
       const response = await fetch("/api/anthropic", {
@@ -910,8 +920,8 @@ Return ${indeedCount} companies. Use real data from Indeed. Empty string for fie
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 12000,
-          system: "You are a lead research assistant for an AI automation agency. Search Indeed and company websites for real businesses actively hiring for roles AI automation could replace. Respond with ONLY a raw JSON array — no markdown, no explanation, just [ ... ].",
+          max_tokens: 16000,
+          system: "You are a lead research assistant for an AI automation agency. Use web search to find real job listings on LinkedIn, ZipRecruiter, Glassdoor, and other job boards. Extract company info from the listings. After searching, respond with ONLY a raw JSON array — no markdown, no explanation, no intro text. Start your response with [ and end with ].",
           messages: [{ role: "user", content: prompt }],
           tools: [{ type: "web_search_20250305", name: "web_search" }],
         }),
@@ -937,7 +947,7 @@ Return ${indeedCount} companies. Use real data from Indeed. Empty string for fie
       }
 
       if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-        setIndeedError("No listings found. Try a different city or role combination.");
+        setIndeedError("No results returned. Try selecting fewer roles or a more specific custom role.");
         setIndeedLoading(false);
         return;
       }
