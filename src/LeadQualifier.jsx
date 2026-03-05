@@ -381,6 +381,17 @@ export default function LeadQualifier() {
   const [draftingIndeedEmail, setDraftingIndeedEmail] = useState(null);
   const [indeedQueueActions, setIndeedQueueActions] = useState({});
 
+  // Indeed — Outreach Options state
+  const [indeedOutreachOpen, setIndeedOutreachOpen] = useState({}); // { [id]: boolean }
+  const [indeedApplyPitch, setIndeedApplyPitch] = useState({});     // { [id]: string }
+  const [generatingApplyPitch, setGeneratingApplyPitch] = useState(null);
+  const [indeedContactInfo, setIndeedContactInfo] = useState({});   // { [id]: { name, email, phone, website } | 'not_found' }
+  const [searchingContact, setSearchingContact] = useState(null);
+  const [indeedContactDraft, setIndeedContactDraft] = useState({}); // { [id]: string }
+  const [generatingContactDraft, setGeneratingContactDraft] = useState(null);
+  const [indeedLinkedInMsg, setIndeedLinkedInMsg] = useState({});   // { [id]: { connectionNote, followUpDm } }
+  const [generatingLinkedInMsg, setGeneratingLinkedInMsg] = useState(null);
+
   const fileRef = useRef();
   const t = themes[theme];
   const ind = INDUSTRIES[industry] || INDUSTRIES.construction;
@@ -711,7 +722,7 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
 
   // ─── INDEED LEAD SEARCH ──────────────────────────────────
   const handleIndeedSearch = async () => {
-    if (!indeedCity.trim()) { showToast("Enter a city or region", "error"); return; }
+    // Problem 1 fixed: city is optional — no validation block
     const rolesToSearch = [
       ...indeedSelectedRoles.map(id => INDEED_ROLES.find(r => r.id === id)?.label).filter(Boolean),
       ...(indeedCustomRole.trim() ? [indeedCustomRole.trim()] : []),
@@ -722,111 +733,160 @@ Keep it 4-5 sentences max. No fluff. Sound like a real person, not a salesperson
     setIndeedError(null);
     setIndeedResults([]);
 
-    const prompt = `You are a lead researcher for Ascend Solutions, an AI automation agency. Search Indeed.com for companies in ${indeedCity.trim()} that are actively hiring for these roles: ${rolesToSearch.join(", ")}.
+    // Problem 3 fixed: batch roles into groups of 3 to avoid overwhelming the AI
+    const batches = [];
+    for (let i = 0; i < rolesToSearch.length; i += 3) {
+      batches.push(rolesToSearch.slice(i, i + 3));
+    }
 
-SEARCH STRATEGY:
-1. Search Indeed for each role type in ${indeedCity.trim()}
-2. Find ${indeedCount} unique companies (avoid duplicate listings from the same company)
-3. For each company, look up their website, Google reviews, and company info
-4. Note the exact pay rate from the posting — this is their budget signal
+    const allRaw = [];
 
-KEY INSIGHT: Companies hiring for these roles have proven budget and proven need. They're about to spend $35K-$55K/year on a human. AI automation can do the same job 24/7 for a fraction of that.
+    for (const batch of batches) {
+      // Problem 3 fixed: dead-simple queries — no site: operators, no extra keywords
+      const searchQueries = batch.map(role =>
+        indeedCity.trim()
+          ? `"${role}" remote job hiring ${indeedCity.trim()}`
+          : `"${role}" remote job hiring 2025 OR 2026`
+      );
 
-RESPOND WITH A JSON ARRAY ONLY. No markdown, no explanation — just [ ... ].
+      const countForBatch = Math.max(3, Math.ceil(indeedCount / batches.length));
 
-Each object must have exactly this structure:
-{
-  "companyName": "Summit HVAC Services",
-  "industry": "HVAC / Home Services",
-  "location": "Austin, TX",
-  "website": "summithvac.com",
-  "phone": "(512) 555-0188",
-  "email": "info@summithvac.com",
-  "jobTitle": "Appointment Setter",
-  "jobPayRate": "$18-22/hr",
-  "annualCost": "$37,440-$45,760",
-  "postingDate": "3 days ago",
-  "jobUrl": "https://indeed.com/viewjob?jk=...",
-  "companySize": "5-20 employees",
-  "googleReviews": { "rating": 4.2, "count": 47 },
-  "automationAngle": "An AI booking bot handles 100% of inbound appointment calls 24/7 — no sick days, instant response, scales without hiring",
-  "automationUseCase": "Inbound call handling, appointment scheduling, quote follow-up, lead qualification",
-  "pitchHook": "Saw you're hiring an Appointment Setter at $20/hr — we built an AI that does this 24/7 for less than one month of that salary",
-  "urgency": "high",
-  "buyingSignals": ["Actively hiring — confirmed budget and need", "Service business with high call volume", "Small team likely overwhelmed with scheduling"],
-  "opportunities": ["Replace role with AI call answering + booking bot", "Automated quote follow-up sequences", "24/7 coverage vs 9-5 human availability"]
-}
+      const prompt = `You are a lead researcher for an AI automation agency. Find ${countForBatch} real remote job listings for these roles: ${batch.join(", ")}.
 
-urgency: "high" = posted within 7 days, "medium" = 7-30 days, "low" = 30+ days.
-Return ${indeedCount} companies. Use real data from Indeed. Empty string for fields you can't find.`;
+Run these searches:
+${searchQueries.map((q, i) => `Search ${i + 1}: ${q}`).join("\n")}
 
-    try {
-      const response = await fetch("/api/anthropic", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 12000,
-          system: "You are a lead research assistant for an AI automation agency. Search Indeed and company websites for real businesses actively hiring for roles AI automation could replace. Respond with ONLY a raw JSON array — no markdown, no explanation, just [ ... ].",
-          messages: [{ role: "user", content: prompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
-      });
+For each listing found, get:
+- The company name
+- The exact job title as posted
+- Pay rate (hourly or salary as shown)
+- Location (Remote, or Remote + city)
+- How long ago it was posted
+- The direct URL to the job posting
+- The company website, phone, email if visible
+- Approximate company size
+- Their Google review rating and count if you can find it
 
-      const data = await response.json();
-      if (data.error) { setIndeedError(data.error.message || "API error. Please try again."); setIndeedLoading(false); return; }
+After searching, respond with ONLY a JSON array. No markdown, no explanation — just [ ... ].
 
-      const textParts = [];
-      (data.content || []).forEach(block => { if (block.type === "text" && block.text) textParts.push(block.text); });
-      const fullText = textParts.join("\n");
+[
+  {
+    "companyName": "Summit HVAC Services",
+    "industry": "HVAC / Home Services",
+    "location": "Remote",
+    "website": "summithvac.com",
+    "phone": "(512) 555-0188",
+    "email": "info@summithvac.com",
+    "jobTitle": "Appointment Setter",
+    "jobPayRate": "$18-22/hr",
+    "annualCost": "$37,440-$45,760",
+    "postingDate": "3 days ago",
+    "jobUrl": "https://indeed.com/viewjob?jk=...",
+    "companySize": "5-20 employees",
+    "googleReviews": { "rating": 4.2, "count": 47 },
+    "automationAngle": "AI booking bot handles 100% of inbound calls 24/7",
+    "automationUseCase": "Inbound call handling, appointment scheduling",
+    "pitchHook": "Saw you're hiring an Appointment Setter at $20/hr — AI does this 24/7 for less",
+    "urgency": "high",
+    "buyingSignals": ["Actively hiring — confirmed budget"],
+    "opportunities": ["AI appointment booking bot"]
+  }
+]
 
-      let parsed = null;
-      const fenceMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
-      if (fenceMatch) { try { parsed = JSON.parse(fenceMatch[1]); } catch {} }
-      if (!parsed) {
-        const greedyMatch = fullText.match(/\[\s*\{[\s\S]*\}\s*\]/);
-        if (greedyMatch) {
-          try { parsed = JSON.parse(greedyMatch[0]); } catch {
-            try { parsed = JSON.parse(greedyMatch[0].replace(/,\s*(?=[}\]])/g, "")); } catch {}
+urgency: "high" = posted ≤7 days, "medium" = 8-30 days, "low" = 30+ days.
+Use empty string for fields you cannot find. Return only real listings you found.`;
+
+      try {
+        const response = await fetch("/api/anthropic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 12000,
+            system: "You are a lead research assistant. Search for real job listings using the provided queries. After searching, respond with ONLY a raw JSON array — no markdown, no explanation. Start your response with [ and end with ].",
+            messages: [{ role: "user", content: prompt }],
+            tools: [{ type: "web_search_20250305", name: "web_search" }],
+          }),
+        });
+
+        // Problem 2 fixed: debug logging for every API call
+        const data = await response.json();
+        console.log("=== RAW API RESPONSE ===");
+        console.log("Status:", response.status);
+        console.log("Content blocks:", data.content?.length);
+        data.content?.forEach((block, i) => {
+          console.log(`Block ${i} type: ${block.type}`);
+          if (block.type === "text") console.log(`Block ${i} text (first 500 chars):`, block.text?.substring(0, 500));
+        });
+
+        if (data.error) {
+          console.error("API error for batch:", batch, data.error);
+          continue;
+        }
+
+        const textParts = [];
+        (data.content || []).forEach(block => { if (block.type === "text" && block.text) textParts.push(block.text); });
+        const fullText = textParts.join("\n");
+
+        console.log("=== FULL TEXT LENGTH ===", fullText.length);
+        console.log("=== FULL TEXT (first 1000 chars) ===", fullText.substring(0, 1000));
+
+        let parsed = null;
+        let jsonMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+        if (jsonMatch) { try { parsed = JSON.parse(jsonMatch[1]); } catch {} }
+        if (!parsed) {
+          jsonMatch = fullText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+          if (jsonMatch) {
+            try { parsed = JSON.parse(jsonMatch[0]); } catch {
+              try { parsed = JSON.parse(jsonMatch[0].replace(/,\s*(?=[}\]])/g, "")); } catch {}
+            }
           }
         }
+
+        console.log("=== JSON PARSE ATTEMPT ===");
+        console.log("Found JSON match:", !!jsonMatch);
+        if (jsonMatch) console.log("JSON match length:", jsonMatch[0]?.length);
+        console.log("Parsed successfully:", !!parsed, "Count:", parsed?.length);
+
+        if (parsed && Array.isArray(parsed)) {
+          allRaw.push(...parsed);
+        }
+      } catch (err) {
+        console.error("Search error for batch:", batch, err);
       }
-
-      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-        setIndeedError("No listings found. Try a different city or role combination.");
-        setIndeedLoading(false);
-        return;
-      }
-
-      const results = parsed.map((r, i) => ({
-        id: Date.now() + i + Math.random(),
-        companyName: r.companyName || "Unknown Company",
-        industry: r.industry || "",
-        location: r.location || indeedCity,
-        website: r.website || "",
-        phone: r.phone || "",
-        email: r.email || "",
-        jobTitle: r.jobTitle || "",
-        jobPayRate: r.jobPayRate || "",
-        annualCost: r.annualCost || "",
-        postingDate: r.postingDate || "",
-        jobUrl: r.jobUrl || "",
-        companySize: r.companySize || "",
-        googleReviews: r.googleReviews || { rating: 0, count: 0 },
-        automationAngle: r.automationAngle || "",
-        automationUseCase: r.automationUseCase || "",
-        pitchHook: r.pitchHook || "",
-        urgency: r.urgency || "medium",
-        buyingSignals: r.buyingSignals || [],
-        opportunities: r.opportunities || [],
-      }));
-
-      setIndeedResults(results);
-      showToast(`Found ${results.length} companies hiring`);
-    } catch (err) {
-      console.error("Indeed search error:", err);
-      setIndeedError("Search failed — please try again.");
     }
+
+    if (allRaw.length === 0) {
+      setIndeedError("No results returned. Check the browser console for details, or try selecting fewer roles.");
+      setIndeedLoading(false);
+      return;
+    }
+
+    const results = allRaw.map((r, i) => ({
+      id: Date.now() + i + Math.random(),
+      companyName: r.companyName || "Unknown Company",
+      industry: r.industry || "",
+      location: r.location || (indeedCity.trim() || "Remote"),
+      website: r.website || "",
+      phone: r.phone || "",
+      email: r.email || "",
+      jobTitle: r.jobTitle || "",
+      jobPayRate: r.jobPayRate || "",
+      annualCost: r.annualCost || "",
+      postingDate: r.postingDate || "",
+      jobUrl: r.jobUrl || "",
+      companySize: r.companySize || "",
+      googleReviews: r.googleReviews || { rating: 0, count: 0 },
+      automationAngle: r.automationAngle || "",
+      automationUseCase: r.automationUseCase || "",
+      pitchHook: r.pitchHook || "",
+      urgency: r.urgency || "medium",
+      buyingSignals: r.buyingSignals || [],
+      opportunities: r.opportunities || [],
+    }));
+
+    setIndeedResults(results);
+    showToast(`Found ${results.length} companies hiring`);
     setIndeedLoading(false);
   };
 
@@ -871,6 +931,205 @@ Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
       showToast("Failed to generate outreach", "error");
     }
     setDraftingIndeedEmail(null);
+  };
+
+  // ─── OUTREACH OPTION 1: APPLY DIRECT PITCH ────────────────
+  const handleIndeedGenerateApplyPitch = async (r) => {
+    setGeneratingApplyPitch(r.id);
+    try {
+      const prompt = `Write a 3-4 sentence pitch message formatted for pasting into a job application "Why are you a good fit?" or cover note field.
+
+Job listing: ${r.jobTitle} at ${r.companyName}
+Pay: ${r.jobPayRate}
+Description: ${r.automationUseCase || r.pitchHook}
+
+Frame it as: you're not applying as a person — you're pitching an AI system that does this job better. Reference the specific role and pay rate. Show the math on annual cost vs AI. End with a call to action to reply.
+
+Keep it under 4 sentences. Direct, confident, no fluff.`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 300,
+          system: "You are writing cold pitches for an AI automation agency. The goal is to hijack a job application form to pitch AI services instead of a resume. Be direct, reference the pay rate, show the math. Under 4 sentences.",
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await response.json();
+      const text = (data.content || []).find(b => b.type === "text")?.text || "";
+      setIndeedApplyPitch(prev => ({ ...prev, [r.id]: text }));
+      showToast("Pitch ready");
+    } catch (err) {
+      console.error("Apply pitch error:", err);
+      showToast("Failed to generate pitch", "error");
+    }
+    setGeneratingApplyPitch(null);
+  };
+
+  // ─── OUTREACH OPTION 2: FIND CONTACT INFO ─────────────────
+  const handleIndeedFindContact = async (r) => {
+    setSearchingContact(r.id);
+    try {
+      const prompt = `Find the contact information for the decision maker at ${r.companyName}.
+
+Job listing context:
+- Company: ${r.companyName}
+- Industry: ${r.industry}
+- Location: ${r.location}
+- Job they posted: ${r.jobTitle}
+- Their website (if known): ${r.website || "unknown"}
+
+IMPORTANT: Verify this is the correct company by cross-referencing industry and location with what you find. If there are multiple companies with similar names, pick the one that matches ${r.industry} in ${r.location}.
+
+Search for:
+1. The owner, founder, or hiring manager's name
+2. Their direct email address
+3. Phone number
+4. Company website
+
+Respond with ONLY a JSON object:
+{
+  "name": "John Smith",
+  "title": "Owner",
+  "email": "john@company.com",
+  "phone": "(555) 123-4567",
+  "website": "company.com",
+  "confidence": "high",
+  "notes": "Verified via LinkedIn and company website"
+}
+
+If you genuinely cannot find contact info after searching, respond with:
+{ "notFound": true }`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: "You are a contact research assistant. Search the web to find real contact info for business decision makers. Cross-reference industry and location to confirm you have the right company. Respond with ONLY a JSON object.",
+          messages: [{ role: "user", content: prompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }),
+      });
+      const data = await response.json();
+      const textParts = [];
+      (data.content || []).forEach(b => { if (b.type === "text" && b.text) textParts.push(b.text); });
+      const fullText = textParts.join("\n");
+
+      let parsed = null;
+      const fenceMatch = fullText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (fenceMatch) { try { parsed = JSON.parse(fenceMatch[1]); } catch {} }
+      if (!parsed) {
+        const objMatch = fullText.match(/\{[\s\S]*\}/);
+        if (objMatch) { try { parsed = JSON.parse(objMatch[0]); } catch {} }
+      }
+
+      if (parsed?.notFound) {
+        setIndeedContactInfo(prev => ({ ...prev, [r.id]: "not_found" }));
+        showToast("No contact info found");
+      } else if (parsed) {
+        setIndeedContactInfo(prev => ({ ...prev, [r.id]: parsed }));
+        showToast("Contact found!");
+      } else {
+        setIndeedContactInfo(prev => ({ ...prev, [r.id]: "not_found" }));
+        showToast("Could not parse contact info", "error");
+      }
+    } catch (err) {
+      console.error("Find contact error:", err);
+      setIndeedContactInfo(prev => ({ ...prev, [r.id]: "not_found" }));
+      showToast("Search failed", "error");
+    }
+    setSearchingContact(null);
+  };
+
+  // ─── OUTREACH OPTION 2b: EMAIL TO FOUND CONTACT ───────────
+  const handleIndeedGenerateContactEmail = async (r) => {
+    const contact = indeedContactInfo[r.id];
+    if (!contact || contact === "not_found") return;
+    setGeneratingContactDraft(r.id);
+    try {
+      const prompt = `Write a cold outreach email to ${contact.name || "the hiring manager"} (${contact.title || "owner"}) at ${r.companyName}.
+
+They posted a job for: ${r.jobTitle} at ${r.jobPayRate}
+My pitch: AI automation can do this job 24/7 for a fraction of what they'd pay a human.
+
+Personalize this to ${contact.name || "them"} specifically. Reference the job posting and pay rate. Show the math. Under 5 sentences. No fluff.`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 400,
+          system: "You are writing cold outreach emails for an AI automation agency. The recipient posted a job listing for a role AI can replace. Reference their name, company, job title, and pay rate. Show the annual cost math. Be direct, not salesy. The math sells itself.",
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await response.json();
+      const text = (data.content || []).find(b => b.type === "text")?.text || "";
+      setIndeedContactDraft(prev => ({ ...prev, [r.id]: text }));
+      showToast("Email draft ready");
+    } catch (err) {
+      console.error("Contact email error:", err);
+      showToast("Failed to generate email", "error");
+    }
+    setGeneratingContactDraft(null);
+  };
+
+  // ─── OUTREACH OPTION 3: LINKEDIN MESSAGES ─────────────────
+  const handleIndeedGenerateLinkedInMsg = async (r) => {
+    setGeneratingLinkedInMsg(r.id);
+    try {
+      const prompt = `Generate two LinkedIn messages for outreach to ${r.companyName} who posted for a ${r.jobTitle} at ${r.jobPayRate}.
+
+Message 1 — Connection request note (STRICT 300 character max, LinkedIn's limit):
+Reference their job posting briefly. Hook them to accept.
+
+Message 2 — Follow-up DM (after they accept, short and conversational, 3-4 sentences):
+Reference the job posting, show the AI cost comparison, end with a soft CTA.
+
+Respond with ONLY a JSON object:
+{
+  "connectionNote": "...",
+  "followUpDm": "..."
+}`;
+
+      const response = await fetch("/api/anthropic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 500,
+          system: "You are writing LinkedIn outreach messages for an AI automation agency targeting companies that posted job listings for roles AI can replace. Respond with ONLY a JSON object with connectionNote and followUpDm fields.",
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await response.json();
+      const textParts = [];
+      (data.content || []).forEach(b => { if (b.type === "text" && b.text) textParts.push(b.text); });
+      const fullText = textParts.join("\n");
+
+      let parsed = null;
+      const fenceMatch = fullText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (fenceMatch) { try { parsed = JSON.parse(fenceMatch[1]); } catch {} }
+      if (!parsed) {
+        const objMatch = fullText.match(/\{[\s\S]*\}/);
+        if (objMatch) { try { parsed = JSON.parse(objMatch[0]); } catch {} }
+      }
+      if (parsed?.connectionNote) {
+        setIndeedLinkedInMsg(prev => ({ ...prev, [r.id]: parsed }));
+        showToast("LinkedIn messages ready");
+      } else {
+        showToast("Failed to generate messages", "error");
+      }
+    } catch (err) {
+      console.error("LinkedIn msg error:", err);
+      showToast("Failed to generate messages", "error");
+    }
+    setGeneratingLinkedInMsg(null);
   };
 
   const handleClearAll = () => {
@@ -1907,8 +2166,8 @@ Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
               <div style={cardStyle}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
                   <div>
-                    <label style={labelStyle}>City or Region *</label>
-                    <input style={inputStyle} value={indeedCity} onChange={e => setIndeedCity(e.target.value)} placeholder="Austin TX, Miami FL..." />
+                    <label style={labelStyle}>City or Region <span style={{ color: t.textFaint, fontWeight: 400, textTransform: "none", fontSize: 10 }}>(optional — leave blank for all remote)</span></label>
+                    <input style={inputStyle} value={indeedCity} onChange={e => setIndeedCity(e.target.value)} placeholder="Austin TX, Miami FL... or leave blank" />
                   </div>
                   <div>
                     <label style={labelStyle}>Number of Results</label>
@@ -2095,6 +2354,144 @@ Under 5 sentences. Sound like a real person, not a sales pitch. No fluff.`;
                               </button>
                             </div>
                           )}
+
+                          {/* ── OUTREACH OPTIONS ── */}
+                          <div style={{ marginTop: 16, borderTop: `1px solid ${t.border}`, paddingTop: 16 }}>
+                            <button
+                              onClick={() => setIndeedOutreachOpen(prev => ({ ...prev, [r.id]: !prev[r.id] }))}
+                              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "8px 16px", color: t.textMuted, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", width: "100%" }}>
+                              <span style={{ flex: 1, textAlign: "left" }}>📬 Outreach Options</span>
+                              <span style={{ fontSize: 11 }}>{indeedOutreachOpen[r.id] ? "▲ Collapse" : "▼ Expand"}</span>
+                            </button>
+
+                            {indeedOutreachOpen[r.id] && (
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginTop: 12 }}>
+
+                                {/* Option 1 — Apply Direct */}
+                                <div style={{ background: t.bgAlt, border: `1px solid ${t.borderLight}`, borderLeft: "3px solid #34d399", borderRadius: 10, padding: 16 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700 }}>🔗 Apply Direct</div>
+                                    <span style={{ fontSize: 10, padding: "2px 8px", background: "#34d39922", color: "#34d399", borderRadius: 12, fontWeight: 700 }}>Fastest</span>
+                                  </div>
+                                  <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Apply through the job posting with a pitch instead of a resume.</p>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                                    {r.jobUrl && (
+                                      <a href={r.jobUrl} target="_blank" rel="noopener noreferrer"
+                                        style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", textDecoration: "none", display: "inline-block" }}>
+                                        Open Listing ↗
+                                      </a>
+                                    )}
+                                    <button onClick={() => handleIndeedGenerateApplyPitch(r)} disabled={generatingApplyPitch === r.id}
+                                      style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#34d399", opacity: generatingApplyPitch === r.id ? 0.6 : 1 }}>
+                                      {generatingApplyPitch === r.id ? "Generating..." : indeedApplyPitch[r.id] ? "Re-generate" : "Generate Pitch"}
+                                    </button>
+                                  </div>
+                                  {indeedApplyPitch[r.id] && (
+                                    <div style={{ marginTop: 8 }}>
+                                      <textarea readOnly value={indeedApplyPitch[r.id]}
+                                        style={{ width: "100%", minHeight: 100, padding: 10, background: t.bgHover, border: `1px solid ${t.borderLight}`, borderRadius: 6, color: t.text, fontSize: 12, lineHeight: 1.5, resize: "vertical", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box" }} />
+                                      <button onClick={() => { navigator.clipboard.writeText(indeedApplyPitch[r.id]); showToast("Copied!"); }}
+                                        style={{ ...btnSecondary, fontSize: 11, padding: "5px 12px", marginTop: 6 }}>Copy</button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Option 2 — Find Contact */}
+                                <div style={{ background: t.bgAlt, border: `1px solid ${t.borderLight}`, borderLeft: "3px solid #60a5fa", borderRadius: 10, padding: 16 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700 }}>🔍 Find Contact Info</div>
+                                    <span style={{ fontSize: 10, padding: "2px 8px", background: "#60a5fa22", color: "#60a5fa", borderRadius: 12, fontWeight: 700 }}>Highest Response Rate</span>
+                                  </div>
+                                  <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Search for this company's email and decision-maker.</p>
+                                  {!indeedContactInfo[r.id] && (
+                                    <button onClick={() => handleIndeedFindContact(r)} disabled={searchingContact === r.id}
+                                      style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#60a5fa", color: "#0c0a09", opacity: searchingContact === r.id ? 0.6 : 1 }}>
+                                      {searchingContact === r.id ? "Searching..." : "Search for Contact"}
+                                    </button>
+                                  )}
+                                  {indeedContactInfo[r.id] === "not_found" && (
+                                    <div style={{ fontSize: 12, color: t.textDim, padding: "8px 0" }}>Could not find contact info — try Apply Direct or LinkedIn instead.</div>
+                                  )}
+                                  {indeedContactInfo[r.id] && indeedContactInfo[r.id] !== "not_found" && (() => {
+                                    const c = indeedContactInfo[r.id];
+                                    return (
+                                      <div style={{ fontSize: 13 }}>
+                                        {c.name && <div style={{ marginBottom: 3 }}>👤 <strong>{c.name}</strong>{c.title ? ` — ${c.title}` : ""}</div>}
+                                        {c.email && <div style={{ marginBottom: 3 }}>✉ {c.email}</div>}
+                                        {c.phone && <div style={{ marginBottom: 3 }}>☎ {c.phone}</div>}
+                                        {c.website && <div style={{ marginBottom: 3 }}>🌐 {c.website}</div>}
+                                        {c.notes && <div style={{ fontSize: 11, color: t.textFaint, marginTop: 4 }}>{c.notes}</div>}
+                                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                          <button onClick={() => handleIndeedGenerateContactEmail(r)} disabled={generatingContactDraft === r.id}
+                                            style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#60a5fa", color: "#0c0a09", opacity: generatingContactDraft === r.id ? 0.6 : 1 }}>
+                                            {generatingContactDraft === r.id ? "Drafting..." : indeedContactDraft[r.id] ? "Re-draft Email" : "Draft Email"}
+                                          </button>
+                                          <button onClick={() => handleIndeedFindContact(r)} disabled={searchingContact === r.id}
+                                            style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px" }}>
+                                            Re-search
+                                          </button>
+                                        </div>
+                                        {indeedContactDraft[r.id] && (
+                                          <div style={{ marginTop: 10 }}>
+                                            <textarea readOnly value={indeedContactDraft[r.id]}
+                                              style={{ width: "100%", minHeight: 120, padding: 10, background: t.bgHover, border: `1px solid ${t.borderLight}`, borderRadius: 6, color: t.text, fontSize: 12, lineHeight: 1.5, resize: "vertical", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box" }} />
+                                            <button onClick={() => { navigator.clipboard.writeText(indeedContactDraft[r.id]); showToast("Copied!"); }}
+                                              style={{ ...btnSecondary, fontSize: 11, padding: "5px 12px", marginTop: 6 }}>Copy</button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+
+                                {/* Option 3 — LinkedIn */}
+                                <div style={{ background: t.bgAlt, border: `1px solid ${t.borderLight}`, borderLeft: "3px solid #a78bfa", borderRadius: 10, padding: 16 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700 }}>💼 LinkedIn Outreach</div>
+                                    <span style={{ fontSize: 10, padding: "2px 8px", background: "#a78bfa22", color: "#a78bfa", borderRadius: 12, fontWeight: 700 }}>Most Personal</span>
+                                  </div>
+                                  <p style={{ fontSize: 12, color: t.textDim, marginBottom: 12, lineHeight: 1.5 }}>Find the hiring manager on LinkedIn and send a personal message.</p>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                                    <a href={`https://www.google.com/search?q=site:linkedin.com/in+"${encodeURIComponent(r.companyName)}"+(owner+OR+"hiring+manager"+OR+HR)`}
+                                      target="_blank" rel="noopener noreferrer"
+                                      style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px", textDecoration: "none", display: "inline-block" }}>
+                                      Search LinkedIn ↗
+                                    </a>
+                                    <button onClick={() => handleIndeedGenerateLinkedInMsg(r)} disabled={generatingLinkedInMsg === r.id}
+                                      style={{ ...btnPrimary, fontSize: 12, padding: "6px 14px", background: "#a78bfa", color: "#0c0a09", opacity: generatingLinkedInMsg === r.id ? 0.6 : 1 }}>
+                                      {generatingLinkedInMsg === r.id ? "Generating..." : indeedLinkedInMsg[r.id] ? "Re-generate" : "Generate Messages"}
+                                    </button>
+                                  </div>
+                                  {indeedLinkedInMsg[r.id] && (() => {
+                                    const msg = indeedLinkedInMsg[r.id];
+                                    const noteLen = (msg.connectionNote || "").length;
+                                    return (
+                                      <div style={{ fontSize: 12 }}>
+                                        <div style={{ marginBottom: 8 }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                                            <span style={{ fontSize: 11, color: t.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>Connection Note</span>
+                                            <span style={{ fontSize: 11, color: noteLen > 300 ? "#f87171" : t.textDim }}>{noteLen}/300</span>
+                                          </div>
+                                          <textarea readOnly value={msg.connectionNote || ""}
+                                            style={{ width: "100%", minHeight: 80, padding: 8, background: t.bgHover, border: `1px solid ${noteLen > 300 ? "#f87171" : t.borderLight}`, borderRadius: 6, color: t.text, fontSize: 12, lineHeight: 1.5, resize: "vertical", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box" }} />
+                                          <button onClick={() => { navigator.clipboard.writeText(msg.connectionNote || ""); showToast("Copied!"); }}
+                                            style={{ ...btnSecondary, fontSize: 11, padding: "4px 10px", marginTop: 4 }}>Copy Note</button>
+                                        </div>
+                                        <div>
+                                          <div style={{ fontSize: 11, color: t.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Follow-up DM</div>
+                                          <textarea readOnly value={msg.followUpDm || ""}
+                                            style={{ width: "100%", minHeight: 90, padding: 8, background: t.bgHover, border: `1px solid ${t.borderLight}`, borderRadius: 6, color: t.text, fontSize: 12, lineHeight: 1.5, resize: "vertical", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box" }} />
+                                          <button onClick={() => { navigator.clipboard.writeText(msg.followUpDm || ""); showToast("Copied!"); }}
+                                            style={{ ...btnSecondary, fontSize: 11, padding: "4px 10px", marginTop: 4 }}>Copy DM</button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
