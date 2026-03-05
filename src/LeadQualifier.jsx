@@ -777,6 +777,18 @@ RULES:
 Return fewer results if needed. Quality over quantity.`;
 
       try {
+        console.log("=== SEARCH START ===");
+        console.log("Selected roles:", rolesToSearch);
+        console.log("City:", indeedCity);
+        console.log("Batch:", batch);
+        console.log("Request body:", JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 12000,
+          system: "(see source)",
+          messages: [{ role: "user", content: prompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }, null, 2));
+
         const response = await fetch("/api/anthropic", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -789,17 +801,19 @@ Return fewer results if needed. Quality over quantity.`;
           }),
         });
 
-        // Problem 2 fixed: debug logging for every API call
+        console.log("=== API RESPONSE ===");
+        console.log("HTTP Status:", response.status);
         const data = await response.json();
-        console.log("=== RAW API RESPONSE ===");
-        console.log("Status:", response.status);
+        console.log("Response has content:", !!data.content);
         console.log("Content blocks:", data.content?.length);
         data.content?.forEach((block, i) => {
-          console.log(`Block ${i} type: ${block.type}`);
-          if (block.type === "text") console.log(`Block ${i} text (first 500 chars):`, block.text?.substring(0, 500));
+          console.log(`Block ${i}: type=${block.type}, length=${block.type === "text" ? block.text?.length : "n/a"}`);
+          if (block.type === "text") {
+            console.log(`Block ${i} text preview:`, block.text?.substring(0, 300));
+          }
         });
-
         if (data.error) {
+          console.log("API ERROR:", JSON.stringify(data.error));
           console.error("API error for batch:", batch, data.error);
           continue;
         }
@@ -808,8 +822,9 @@ Return fewer results if needed. Quality over quantity.`;
         (data.content || []).forEach(block => { if (block.type === "text" && block.text) textParts.push(block.text); });
         const fullText = textParts.join("\n");
 
-        console.log("=== FULL TEXT LENGTH ===", fullText.length);
-        console.log("=== FULL TEXT (first 1000 chars) ===", fullText.substring(0, 1000));
+        console.log("=== PARSING ===");
+        console.log("Full text to parse (first 500 chars):", fullText?.substring(0, 500));
+        console.log("Full text length:", fullText?.length);
 
         let parsed = null;
         let jsonMatch = fullText.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
@@ -823,10 +838,13 @@ Return fewer results if needed. Quality over quantity.`;
           }
         }
 
-        console.log("=== JSON PARSE ATTEMPT ===");
-        console.log("Found JSON match:", !!jsonMatch);
-        if (jsonMatch) console.log("JSON match length:", jsonMatch[0]?.length);
-        console.log("Parsed successfully:", !!parsed, "Count:", parsed?.length);
+        console.log("=== PARSE RESULT ===");
+        console.log("Parsed successfully:", !!parsed);
+        console.log("Is array:", Array.isArray(parsed));
+        console.log("Result count:", parsed?.length);
+        if (parsed?.length > 0) {
+          console.log("First result:", JSON.stringify(parsed[0], null, 2));
+        }
 
         if (parsed && Array.isArray(parsed)) {
           // Filter out any listings where the URL doesn't contain some form of the company name
@@ -848,7 +866,23 @@ Return fewer results if needed. Quality over quantity.`;
             return true;
           });
 
-          console.log("=== URL VALIDATION ===", "Parsed:", parsed.length, "Validated:", validated.length);
+          console.log("=== FILTERING (URL validation) ===");
+          console.log("Before filter:", parsed.length);
+          console.log("After filter:", validated.length);
+          console.log("Filtered out:", parsed.length - validated.length, "listings (no valid postingUrl or not from known job board)");
+          parsed.forEach((listing, i) => {
+            const kept = validated.includes(listing);
+            if (!kept) {
+              const hasUrl = !!(listing.postingUrl && listing.postingUrl.trim());
+              let validUrl = false;
+              if (hasUrl) { try { new URL(listing.postingUrl); validUrl = true; } catch {} }
+              const validDomains = ['indeed.com', 'linkedin.com', 'ziprecruiter.com', 'glassdoor.com', 'careerbuilder.com', 'monster.com', 'simplyhired.com'];
+              const url = (listing.postingUrl || "").toLowerCase();
+              const isJobBoard = validDomains.some(d => url.includes(d));
+              const isCompanySite = listing.company && url.includes(listing.company.toLowerCase().split(' ')[0]);
+              console.log(`  Dropped [${i}] "${listing.company}" — hasUrl:${hasUrl}, validUrl:${validUrl}, isJobBoard:${isJobBoard}, isCompanySite:${isCompanySite}, url:"${listing.postingUrl}"`);
+            }
+          });
 
           // Map new prompt field names to the field names the rest of the code expects
           const normalized = validated.map(l => ({
@@ -897,6 +931,15 @@ Return fewer results if needed. Quality over quantity.`;
 
     // Fix 1: Filter out listings with no confirmed job URL
     const withLinks = dedupedRaw.filter(r => r.jobUrl && r.jobUrl.trim() !== "");
+    console.log("=== FILTERING (jobUrl gate) ===");
+    console.log("Before filter:", dedupedRaw.length);
+    console.log("After filter:", withLinks.length);
+    console.log("Filtered out:", dedupedRaw.length - withLinks.length, "listings with empty jobUrl");
+    dedupedRaw.forEach((r, i) => {
+      if (!r.jobUrl || r.jobUrl.trim() === "") {
+        console.log(`  Dropped [${i}] "${r.companyName}" — jobUrl is empty`);
+      }
+    });
 
     // Fix 4: Build pipeline lead map — normalizedCompany → array of followUp statuses
     const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/[™®©]/g, "").replace(/[^a-z0-9]/g, "");
